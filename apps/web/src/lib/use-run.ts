@@ -7,7 +7,7 @@ import { readEventStream } from "./sse";
 
 export type Summary = Extract<RunEvent, { type: "summary" }>;
 
-export type Message = { role: "you" | "agent"; text: string };
+export type Message = { role: "you" | "agent"; text: string; kind?: "status" | "chat" };
 
 export type Run = {
   state: RunState;
@@ -24,6 +24,9 @@ export type Run = {
   // events are whole sentences and each deserves its own paragraph; an answer
   // arrives as deltas that have to land in one.
   answering: boolean;
+  // Invoice ids currently mid-park, from either the "approve all" button or a
+  // single row's own approve button. Drives the per-row spinner.
+  parkingIds: string[];
 };
 
 const EMPTY: Run = {
@@ -38,6 +41,7 @@ const EMPTY: Run = {
   blockedIds: [],
   error: null,
   answering: false,
+  parkingIds: [],
 };
 
 function apply(run: Run, event: RunEvent): Run {
@@ -51,9 +55,24 @@ function apply(run: Run, event: RunEvent): Run {
         invoices: [...run.invoices, { ...event, rules: [], status: "pending" }],
       };
 
-    case "tool-call":
+    case "tool-call": {
       // Keep the rail short; it is a live indicator, not a log viewer.
-      return { ...run, calls: [...run.calls, event].slice(-14) };
+      const calls = [...run.calls, event].slice(-14);
+      if (!event.invoiceId) return { ...run, calls };
+      return {
+        ...run,
+        calls,
+        // Started on this invoice's first tool call, not its first rule. The
+        // orchestrator does the SAP lookups and every judge call for an invoice
+        // *before* it yields a single rule event, then emits all sixteen back to
+        // back - timing from the first rule would measure only that final burst
+        // and miss the real wait entirely. The tool call fires the moment the
+        // orchestrator actually starts on this invoice.
+        invoices: run.invoices.map((i) =>
+          i.invoiceId === event.invoiceId ? { ...i, startedAt: i.startedAt ?? Date.now() } : i,
+        ),
+      };
+    }
 
     case "rule":
       return {
@@ -65,10 +84,14 @@ function apply(run: Run, event: RunEvent): Run {
           // Derive from the chips rather than waiting for `invoice-status`. A row
           // must turn red on the failing chip, mid-cascade — that is the moment
           // the whole interface exists to show. Parked never regresses.
+          const status = i.status === "parked" ? i.status : deriveStatus(rules);
           return {
             ...i,
             rules,
-            status: i.status === "parked" ? i.status : deriveStatus(rules),
+            status,
+            // Fallback only - normally already set by this invoice's tool call.
+            startedAt: i.startedAt ?? Date.now(),
+            finishedAt: i.finishedAt ?? (status === "pending" ? undefined : Date.now()),
           };
         }),
       };
@@ -85,6 +108,8 @@ function apply(run: Run, event: RunEvent): Run {
                 impact: event.impact,
                 detail: event.detail,
                 suggestion: event.suggestion,
+                startedAt: i.startedAt ?? Date.now(),
+                finishedAt: i.finishedAt ?? Date.now(),
               }
             : i,
         ),
@@ -105,20 +130,36 @@ function apply(run: Run, event: RunEvent): Run {
       return {
         ...run,
         state: "posting",
-        invoices: run.invoices.map((i) =>
-          i.invoiceId === event.invoiceId
-            ? {
-                ...i,
-                status: event.status === "parked" ? "parked" : i.status,
-                sapDocument: event.sapDocument,
-                fiscalYear: event.fiscalYear,
-                reference: event.reference,
-              }
-            : i,
-        ),
+        parkingIds: run.parkingIds.filter((id) => id !== event.invoiceId),
+        invoices: run.invoices.map((i) => {
+          if (i.invoiceId !== event.invoiceId) return i;
+          // "error" must land as its own visible status - leaving it on "ready"
+          // is what made a failed park look identical to one nobody had touched
+          // yet, even though the row's own approve button had already fired.
+          if (event.status === "error") {
+            return { ...i, status: "parkError", parkError: event.message };
+          }
+          if (event.status === "parked") {
+            return {
+              ...i,
+              status: "parked",
+              sapDocument: event.sapDocument,
+              fiscalYear: event.fiscalYear,
+              reference: event.reference,
+            };
+          }
+          return i;
+        }),
       };
 
     case "text": {
+      // Narration emitted while the batch is running (files received, extraction,
+      // validation) is process status, not conversation - it renders in its own
+      // live-status panel. Anything else is a real answer to a question asked.
+      const kind: Message["kind"] =
+        run.state === "extracting" || run.state === "validating" || run.state === "posting"
+          ? "status"
+          : "chat";
       const last = run.messages.at(-1);
       if (run.answering && last?.role === "agent") {
         return {
@@ -126,7 +167,7 @@ function apply(run: Run, event: RunEvent): Run {
           messages: [...run.messages.slice(0, -1), { ...last, text: last.text + event.delta }],
         };
       }
-      return { ...run, messages: [...run.messages, { role: "agent", text: event.delta }] };
+      return { ...run, messages: [...run.messages, { role: "agent", text: event.delta, kind }] };
     }
 
     case "error":
@@ -189,19 +230,36 @@ export function useRun() {
     [run.runId, consume],
   );
 
-  const approve = useCallback(async () => {
-    const current = token.current;
-    if (!run.runId) return;
-    setRun((prev) => ({ ...prev, state: "posting" }));
+  const approve = useCallback(
+    async (ids?: string[]) => {
+      const current = token.current;
+      if (!run.runId) return;
+      const targetIds = ids ?? run.readyIds;
+      if (targetIds.length === 0) return;
+      setRun((prev) => ({
+        ...prev,
+        state: "posting",
+        parkingIds: [...prev.parkingIds, ...targetIds],
+      }));
 
-    const response = await fetch("/api/approve", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ runId: run.runId, readyIds: run.readyIds }),
-    });
-    await consume(response, current);
-    setRun((prev) => ({ ...prev, state: "done" }));
-  }, [run.runId, run.readyIds, consume]);
+      const response = await fetch("/api/approve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ runId: run.runId, readyIds: targetIds }),
+      });
+      await consume(response, current);
+      // "Done" is earned, not assumed - a single row's approve button only parks
+      // that one invoice, and the run stays awaiting-approval until every ready
+      // invoice has actually been parked, however many separate calls that took.
+      setRun((prev) => {
+        const settled = prev.readyIds.every(
+          (id) => prev.invoices.find((i) => i.invoiceId === id)?.status === "parked",
+        );
+        return { ...prev, state: settled ? "done" : "awaiting-approval", parkingIds: [] };
+      });
+    },
+    [run.runId, run.readyIds, consume],
+  );
 
   const reset = useCallback(() => {
     token.current += 1;

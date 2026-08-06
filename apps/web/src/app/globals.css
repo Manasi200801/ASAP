@@ -24,6 +24,9 @@
   --color-on-surface-variant: #9fb0c0;
   --color-on-surface-faint: #7c8fa1;
 
+  --color-header: #16212e;
+  --color-on-header: #e9edf1;
+
   --color-primary: #ff9900;
   --color-on-primary: #0f1b2a;
   --color-primary-container: #4a3006;
@@ -57,12 +60,65 @@
   --m: 1;
 }
 
+/* Light mode: real AWS Cloudscape surfaces (pulled from @cloudscape-design/
+   design-tokens' visual-refresh light values, not approximated by eye), with
+   one deliberate departure the dark theme already establishes as this app's
+   own identity: the title bar reads as AWS's console blue. The primary accent
+   is copied verbatim from the dark theme below, same hex and same paired text
+   color, rather than re-picked for light backgrounds - one yellow, one
+   contrast pairing, used everywhere in both themes. */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --color-background: #ffffff;
+  --color-surface: #ffffff;
+  --color-surface-dim: #f6f6f9;
+  --color-surface-bright: #ffffff;
+  --color-surface-container-lowest: #ffffff;
+  --color-surface-container-low: #f8f8f8;
+  --color-surface-container: #f3f3f7;
+  --color-surface-container-high: #ebebf0;
+  --color-surface-container-highest: #dedee3;
+
+  --color-outline: #8c8c94;
+  --color-outline-variant: #c6c6cd;
+
+  --color-on-surface: #0f141a;
+  --color-on-surface-variant: #424650;
+  --color-on-surface-faint: #656871;
+
+  --color-header: #006ce0;
+  --color-on-header: #ffffff;
+
+  --color-primary: #ff9900;
+  --color-on-primary: #0f1b2a;
+  --color-primary-container: #4a3006;
+  --color-on-primary-container: #ffc266;
+
+  --color-secondary: #006ce0;
+  --color-on-secondary: #ffffff;
+  --color-secondary-container: #f0fbff;
+  --color-on-secondary-container: #002b66;
+
+  --color-success: #00802f;
+  --color-on-success: #ffffff;
+  --color-success-container: #effff1;
+  --color-on-success-container: #00802f;
+
+  --color-error: #db0000;
+  --color-on-error: #ffffff;
+  --color-error-container: #fff5f5;
+  --color-on-error-container: #db0000;
+}
+
 body {
   background: var(--color-background);
   color: var(--color-on-surface);
   font-family: var(--font-ui);
   font-size: 17px;
   font-feature-settings: "tnum" 1;
+  transition: background-color calc(180ms * var(--m)) var(--ease-in-out), color
+    calc(180ms * var(--m)) var(--ease-in-out);
 }
 
 /* ---- state layers: M3 hover/focus/pressed overlays on top of a color role ---- */
