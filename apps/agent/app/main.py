@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import pathlib
 from typing import AsyncIterator
@@ -24,9 +25,18 @@ try:
 except ImportError:  # pragma: no cover - dotenv is optional
     pass
 
+# Configured here, once, before any module logger is used. uvicorn covers the
+# HTTP line; everything interesting happens after it - which SAP entity was read,
+# which model was asked, how long each took - and none of that was visible.
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)-5s %(name)-16s %(message)s",
+    datefmt="%H:%M:%S",
+)
+
 from . import events as ev  # noqa: E402
 from .judge import build_judge  # noqa: E402
-from .orchestrator import RunStore, post_run, validate_run  # noqa: E402
+from .orchestrator import RunStore, answer_run, post_run, validate_run  # noqa: E402
 from .sap import build_sap  # noqa: E402
 
 ACCOUNT = os.getenv("AWS_ACCOUNT_ID", "516359819848")
@@ -40,9 +50,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+log = logging.getLogger("app.http")
+
 store = RunStore()
 sap = build_sap()
 judge = build_judge()
+
+log.info("backends: sap=%s judge=%s", type(sap).__name__, type(judge).__name__)
 
 
 async def sse(events: AsyncIterator[ev.Event]) -> AsyncIterator[bytes]:
@@ -75,7 +89,28 @@ class ApproveRequest(BaseModel):
 
 @app.post("/chat")
 async def chat(request: ChatRequest) -> StreamingResponse:
-    """Read-only: extract and validate. Nothing reaches SAP from here."""
+    """Read-only, two modes. Nothing reaches SAP from here in either.
+
+    A message about a batch that has already been checked is a question, and is
+    answered from the stored run. Anything else starts a run.
+
+    The distinction is the whole of the fix: previously every message re-ran the
+    validation, so asking "why was invoice 6 blocked?" re-checked all six against
+    SAP and answered nothing.
+    """
+    existing = store.get(request.runId)
+    if request.message and existing is not None and existing.invoices:
+        log.info("chat %s answering: %r", request.runId, request.message[:80])
+        return stream(answer_run(existing, request.message))
+
+    log.info(
+        "chat %s starting run: %d files, locale=%s, sap=%s, judge=%s",
+        request.runId,
+        len(request.keys),
+        request.locale,
+        type(sap).__name__,
+        type(judge).__name__,
+    )
     run = store.create(request.runId, ACCOUNT, request.locale)
     return stream(validate_run(run, request.keys, sap, judge))
 
@@ -87,8 +122,10 @@ async def approve(request: ApproveRequest) -> StreamingResponse:
     A separate request rather than a chat message, so the single approval gate is
     structural: the state machine rejects anything not awaiting approval.
     """
+    log.info("approve %s requested", request.runId)
     run = store.get(request.runId)
     if run is None:
+        log.warning("approve %s rejected: no such run", request.runId)
 
         async def missing() -> AsyncIterator[ev.Event]:
             yield ev.Error(message="No such run.", recoverable=False)

@@ -15,6 +15,7 @@ arrival, so an unpaced flush collapses it into one frame. Emitting one rule per
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -26,6 +27,8 @@ from .judge import Judge
 from .rules import AGENT_RULE_IDS, RULE_COUNT, RuleResult, run_deterministic
 from .sap import Sap, SapError
 from .types import Extracted
+
+log = logging.getLogger("app.run")
 
 # Emission floors, in seconds. See contract/events.md.
 FLOOR_RULE = 0.06
@@ -51,6 +54,13 @@ class Run:
     invoices: list[Extracted] = field(default_factory=list)
     ready: list[str] = field(default_factory=list)
     blocked: list[str] = field(default_factory=list)
+
+    # What the checks decided, kept after the stream ends. A question typed once
+    # the batch has settled is answered from this record; without it the only way
+    # to answer anything is to validate all over again, which is what the first
+    # version did and why asking a question re-ran six invoices.
+    results: dict[str, list[RuleResult]] = field(default_factory=dict)
+    headlines: dict[str, str] = field(default_factory=dict)
 
     def reference_for(self, index: int) -> str:
         """`<account>-<n>`, capped at 16 characters by SAP.
@@ -114,7 +124,15 @@ async def validate_run(
     yield ev.Text(delta="Files received. Reading them now.")
     await asyncio.sleep(BEAT)
 
+    started = time.perf_counter()
     run.invoices = await extract_batch(keys)
+    log.info(
+        "%s extracted %d invoices in %.1fs, references from %s",
+        run.run_id,
+        len(run.invoices),
+        time.perf_counter() - started,
+        run.reference_for(0),
+    )
     yield ev.Batch(runId=run.run_id, reference=run.reference_for(0), count=len(run.invoices))
 
     for index, inv in enumerate(run.invoices):
@@ -150,6 +168,7 @@ async def validate_run(
     agent_decided = 0
 
     for inv in run.invoices:
+        invoice_started = time.perf_counter()
         yield ev.ToolCall(
             invoiceId=inv.invoice_id,
             method="GET",
@@ -167,6 +186,7 @@ async def validate_run(
             9: await judge.price_within_policy(inv, po),
         }
         results = {**deterministic, **judged}
+        run.results[inv.invoice_id] = [results[rule_id] for rule_id in sorted(results)]
 
         failures: list[RuleResult] = []
         stopped = False
@@ -199,6 +219,19 @@ async def validate_run(
             yield _rule_event(run, inv, result)
             await asyncio.sleep(FLOOR_RULE)
 
+        log.info(
+            "%s %s -> %s in %.1fs%s",
+            run.run_id,
+            inv.invoice_id,
+            "BLOCKED" if failures else "ready",
+            time.perf_counter() - invoice_started,
+            (
+                " on " + ", ".join(f"rule {f.rule_id} {f.label}" for f in failures)
+                if failures
+                else ""
+            ),
+        )
+
         if failures:
             run.blocked.append(inv.invoice_id)
             suggestion = None
@@ -221,10 +254,12 @@ async def validate_run(
                         value=alt.number,
                     )
 
+            run.headlines[inv.invoice_id] = await judge.explain(inv, failures, run.locale)
+
             yield ev.InvoiceStatus(
                 invoiceId=inv.invoice_id,
                 status="blocked",
-                headline=await judge.explain(inv, failures, run.locale),
+                headline=run.headlines[inv.invoice_id],
                 impact=(
                     "This invoice cannot be parked. The rest of the batch is unaffected."
                 ),
@@ -315,9 +350,17 @@ async def post_run(run: Run, sap: Sap) -> AsyncIterator[ev.Event]:
         except SapError as error:
             # One failure never stops the batch - that is the whole point of the
             # per-invoice gate.
+            log.error("%s %s park failed: %s", run.run_id, inv.invoice_id, error)
             yield ev.Posting(invoiceId=inv.invoice_id, status="error", message=str(error))
             continue
 
+        log.info(
+            "%s %s parked as SAP document %s, reference %s",
+            run.run_id,
+            inv.invoice_id,
+            parked.sap_document,
+            inv.reference,
+        )
         yield ev.Posting(
             invoiceId=inv.invoice_id,
             status="parked",
@@ -334,3 +377,120 @@ async def post_run(run: Run, sap: Sap) -> AsyncIterator[ev.Event]:
             f"{len(run.blocked)} still open."
         )
     )
+
+
+ANSWER_SYSTEM = """You are the accounts payable assistant for a batch of supplier
+invoices that has already been checked against SAP S/4HANA.
+
+Answer the user's question using only the run record you are given. The record is
+the complete result of the checks; it is not a summary you should second-guess.
+
+Rules:
+- Answer in plain business language. The reader approves invoices; they do not
+  know SAP field names or rule numbers, so translate rather than quote.
+- Be specific. Name invoices, amounts and suppliers from the record.
+- Amounts are in the currency stated in the record. Never convert them.
+- Totals are given to you already calculated. Quote them. Never add figures up
+  yourself and never present a sum the record does not state.
+- Plain text only. No markdown, no asterisks - the answer is rendered as-is.
+- If the record does not contain the answer, say so plainly and say what would.
+- Never suggest you can post, park, reverse or change anything. You can only
+  explain. Posting happens when the user presses Approve, never because of
+  something said in conversation.
+- Two or three sentences unless the question genuinely needs more. No headings,
+  no bullet lists.
+"""
+
+
+def _totals(run: Run) -> str:
+    """Sums, computed here rather than left to the model.
+
+    Asked for a batch total, a model will happily add the figures itself and get
+    it wrong - an early version answered 454.00 for invoices totalling 513.50.
+    Money arithmetic is not a judgement call, so it is done in Python and handed
+    over as a fact.
+    """
+    from decimal import Decimal, InvalidOperation
+
+    def total(invoice_ids: list[str]) -> str:
+        amount = Decimal(0)
+        for inv in run.invoices:
+            if inv.invoice_id not in invoice_ids:
+                continue
+            try:
+                amount += Decimal(inv.gross_amount)
+            except InvalidOperation:  # an unparsable amount must not fake a total
+                return "not calculable"
+        return f"{amount:.2f}"
+
+    currencies = {inv.currency for inv in run.invoices} or {"EUR"}
+    currency = currencies.pop() if len(currencies) == 1 else "mixed currencies"
+    return (
+        f"Gross total ready to approve: {total(run.ready)} {currency}. "
+        f"Gross total blocked: {total(run.blocked)} {currency}."
+    )
+
+
+def _run_record(run: Run) -> str:
+    """The batch as text, for a question to be answered against."""
+    lines = [
+        f"Run {run.run_id}. State: {run.state}. "
+        f"{len(run.ready)} ready, {len(run.blocked)} blocked, "
+        f"{len(run.invoices)} invoices total.",
+        _totals(run),
+        "",
+    ]
+
+    for inv in run.invoices:
+        verdict = "blocked" if inv.invoice_id in run.blocked else "ready"
+        lines.append(
+            f"{inv.invoice_id} ({inv.file}) - {verdict}. "
+            f"Supplier invoice {inv.supplier_invoice_id}, supplier {inv.vendor}, "
+            f"purchase order {inv.purchase_order} item {inv.purchase_order_item}, "
+            f"{inv.quantity} {inv.unit} of {inv.material} at {inv.unit_price} each, "
+            f"net {inv.net_amount}, gross {inv.gross_amount} {inv.currency}, "
+            f"SAP reference {inv.reference or 'not yet assigned'}."
+        )
+        if inv.invoice_id in run.headlines:
+            lines.append(f"  Why it is blocked: {run.headlines[inv.invoice_id]}")
+
+        # Only the failures and the judged checks. Listing sixteen passes per
+        # invoice buries the two lines that actually answer anything.
+        for result in run.results.get(inv.invoice_id, []):
+            if result.passed and result.rule_id not in AGENT_RULE_IDS:
+                continue
+            decided = "judged by the agent" if result.rule_id in AGENT_RULE_IDS else "rule"
+            detail = result.detail or result.reasoning or ""
+            lines.append(
+                f"  Check {result.rule_id} '{result.label}': "
+                f"{'passed' if result.passed else 'FAILED'} ({decided}). {detail}"
+                + (f" Source: {result.citation}." if result.citation else "")
+            )
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+async def answer_run(run: Run, message: str) -> AsyncIterator[ev.Event]:
+    """Answer a typed question about a run that has already been checked.
+
+    Read-only in the strongest sense: this touches neither SAP nor the run state.
+    A question is a question, and answering one must never be able to re-trigger
+    validation or move the state machine.
+    """
+    if not run.invoices:
+        yield ev.Text(
+            delta="There is no batch to discuss yet. Upload some invoices and I will check them."
+        )
+        return
+
+    language = "German" if run.locale == "de" else "English"
+    prompt = f"Run record:\n\n{_run_record(run)}\n\nQuestion: {message}\n\nAnswer in {language}."
+
+    from .bedrock import stream_text
+
+    try:
+        async for delta in stream_text(ANSWER_SYSTEM, prompt):
+            yield ev.Text(delta=delta)
+    except Exception as error:  # noqa: BLE001 - a failed answer must not fail the run
+        yield ev.Text(delta=f"I could not answer that: {error}")
