@@ -64,7 +64,13 @@ was an invoice, the run fails with `No supplier invoices to check.`
 
 ### `POST /api/approve`
 
-Request: `{ "runId": string }`
+Request: `{ "runId": string, "readyIds"?: string[] }`
+
+`readyIds` omitted or empty parks every ready invoice still outstanding; a subset parks only
+those rows (a single invoice's own approve button). An invoice already parked by an earlier call
+is skipped rather than parked twice, so individual and "approve all" calls can be mixed freely on
+the same run. The run only reaches `done` once every ready invoice has been parked, however many
+separate calls that took - one row parked out of five leaves the run in `awaiting-approval`.
 
 Response: an SSE stream of `tool-call` and `posting` events.
 

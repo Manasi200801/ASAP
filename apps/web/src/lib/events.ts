@@ -147,7 +147,10 @@ export type RunState =
 
 export type InvoiceRow = InvoiceEvent & {
   rules: RuleEvent[];
-  status: "pending" | "ready" | "blocked" | "parked";
+  // "parkError" is distinct from "blocked" - it passed every check and only
+  // failed on the SAP write itself, so it stays eligible for a retry rather
+  // than being excluded from the batch the way a failed check is.
+  status: "pending" | "ready" | "blocked" | "parked" | "parkError";
   headline?: string;
   impact?: string;
   detail?: string;
@@ -155,6 +158,12 @@ export type InvoiceRow = InvoiceEvent & {
   sapDocument?: string;
   fiscalYear?: string;
   reference?: string;
+  parkError?: string;
+  // Set on the first `rule` event for this invoice, not on `invoice` - checks run
+  // sequentially, so timing from extraction would make every later invoice's
+  // duration include the wait for everything ahead of it in the queue.
+  startedAt?: number;
+  finishedAt?: number;
 };
 
 /** Derive an invoice's overall status from its rule results. */

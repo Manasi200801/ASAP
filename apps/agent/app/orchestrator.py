@@ -26,7 +26,7 @@ from . import events as ev
 from .extract import extract_batch
 from .judge import Judge
 from .rules import AGENT_RULE_IDS, RULE_COUNT, RuleResult, run_deterministic
-from .sap import Sap, SapError
+from .sap import Sap
 from .types import Extracted, GoodsReceipt, PurchaseOrder
 
 log = logging.getLogger("app.run")
@@ -63,6 +63,12 @@ class Run:
     invoices: list[Extracted] = field(default_factory=list)
     ready: list[str] = field(default_factory=list)
     blocked: list[str] = field(default_factory=list)
+
+    # Ready invoices actually parked so far, across however many separate
+    # `/approve` calls it took - the single "approve all" button and each row's
+    # own approve button both write here, so neither can double-park an invoice
+    # or close the run before every ready invoice has landed in SAP.
+    parked: list[str] = field(default_factory=list)
 
     # What the checks decided, accumulated during the run and written to the
     # database once it settles. Questions are answered from there, not from here:
@@ -448,8 +454,14 @@ def park_payload(inv: Extracted, index: int, run: Run) -> dict:
     }
 
 
-async def post_run(run: Run, sap: Sap) -> AsyncIterator[ev.Event]:
-    """The only path that writes to SAP."""
+async def post_run(run: Run, sap: Sap, ids: list[str] | None = None) -> AsyncIterator[ev.Event]:
+    """The only path that writes to SAP.
+
+    `ids` narrows this call to one row's own approve button; omit it to park
+    every ready invoice still outstanding. Either way, an invoice already in
+    `run.parked` is skipped, so the same invoice never parks twice and a mix of
+    individual and "approve all" calls on the same run stays safe.
+    """
 
     if run.state != "awaiting-approval":
         yield ev.Error(message="This run is not waiting for approval.", recoverable=False)
@@ -460,7 +472,9 @@ async def post_run(run: Run, sap: Sap) -> AsyncIterator[ev.Event]:
     await asyncio.sleep(BEAT * 0.7)
 
     for index, inv in enumerate(run.invoices):
-        if inv.invoice_id not in run.ready:
+        if inv.invoice_id not in run.ready or inv.invoice_id in run.parked:
+            continue
+        if ids is not None and inv.invoice_id not in ids:
             continue
 
         yield ev.ToolCall(
@@ -471,9 +485,13 @@ async def post_run(run: Run, sap: Sap) -> AsyncIterator[ev.Event]:
         )
         try:
             parked = await sap.park(park_payload(inv, index, run))
-        except SapError as error:
+        except Exception as error:  # noqa: BLE001 - deliberately broader than SapError
             # One failure never stops the batch - that is the whole point of the
-            # per-invoice gate.
+            # per-invoice gate. `SapError` covers the failures the client wraps
+            # deliberately; anything else (a dropped connection, a timeout on the
+            # AgentCore round trip) must be caught here too, or one invoice's
+            # network hiccup silently kills the stream and strands every invoice
+            # still waiting behind it in "ready".
             log.error("%s %s park failed: %s", run.run_id, inv.invoice_id, error)
             yield ev.Posting(invoiceId=inv.invoice_id, status="error", message=str(error))
             continue
@@ -485,6 +503,7 @@ async def post_run(run: Run, sap: Sap) -> AsyncIterator[ev.Event]:
             parked.sap_document,
             inv.reference,
         )
+        run.parked.append(inv.invoice_id)
         run.sap_documents[inv.invoice_id] = parked.sap_document
         yield ev.Posting(
             invoiceId=inv.invoice_id,
@@ -495,15 +514,24 @@ async def post_run(run: Run, sap: Sap) -> AsyncIterator[ev.Event]:
         )
         await asyncio.sleep(FLOOR_POSTING)
 
-    run.state = "done"
-    # Again, so "what happened to FPL-1563?" can answer with its SAP document.
+    # Written after every approve call, not only the last one. A row parked by
+    # its own button is in SAP whether or not the other four ever follow, and the
+    # chat has to be able to say so.
     db.save_run(run)
-    yield ev.Text(
-        delta=(
-            f"{len(run.ready)} parked documents in SAP, fiscal year 2025. "
-            f"{len(run.blocked)} still open."
+
+    # Only the last invoice's approval closes the run - one row parked out of
+    # five must leave the other four still awaiting their own approve calls.
+    if len(run.parked) >= len(run.ready):
+        run.state = "done"
+        db.save_run(run)  # once more, to record the closing state
+        yield ev.Text(
+            delta=(
+                f"{len(run.parked)} parked documents in SAP, fiscal year 2025. "
+                f"{len(run.blocked)} still open."
+            )
         )
-    )
+    else:
+        run.state = "awaiting-approval"
 
 
 async def answer_run(

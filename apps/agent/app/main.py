@@ -125,6 +125,10 @@ class ChatRequest(BaseModel):
 
 class ApproveRequest(BaseModel):
     runId: str
+    # Omit to park every ready invoice; pass a subset for a single row's own
+    # approve button. Repeated calls are safe - `post_run` skips whatever a
+    # previous call already parked.
+    readyIds: list[str] | None = None
 
 
 @app.post("/chat")
@@ -182,7 +186,7 @@ async def approve(request: ApproveRequest) -> StreamingResponse:
 
         return stream(missing())
 
-    return stream(post_run(run, sap))
+    return stream(post_run(run, sap, ids=request.readyIds))
 
 
 @app.get("/health")

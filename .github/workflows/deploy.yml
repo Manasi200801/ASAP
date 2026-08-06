@@ -1,0 +1,111 @@
+name: Deploy
+
+# Deploys apps/web to Vercel. A pull request gets its own preview URL; main goes
+# to production.
+#
+# Deliberately a separate workflow that waits on CI rather than extra jobs inside
+# it: Vercel's own Git integration would deploy on every push regardless of
+# whether lint, types and tests passed, and a green-looking preview built from a
+# broken commit is worse than no preview.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+concurrency:
+  # One deploy at a time per branch, and abandon a superseded one - pushing twice
+  # in a minute should not race two builds to production.
+  group: deploy-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    # Never deploy a commit whose checks failed.
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    env:
+      # Not credentials - they identify the project, and are useless without
+      # VERCEL_TOKEN. Inlined so the only thing to configure is that one secret.
+      # `.vercel/project.json` is gitignored, so CI cannot read them from the repo.
+      VERCEL_ORG_ID: team_ulvt7GLkAlJAB1GuszzM4PcB
+      VERCEL_PROJECT_ID: prj_ZbMeHsOreJ9Ngvio4cLm7ksTgqeA
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # workflow_run starts from the default branch, so the commit under test
+          # has to be checked out explicitly or every deploy would ship main.
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Resolve target
+        id: target
+        run: |
+          if [ "${{ github.event.workflow_run.head_branch }}" = "main" ]; then
+            echo "environment=production" >> "$GITHUB_OUTPUT"
+            echo "flag=--prod" >> "$GITHUB_OUTPUT"
+          else
+            echo "environment=preview" >> "$GITHUB_OUTPUT"
+            echo "flag=" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Build locally and upload the result, rather than letting Vercel build.
+      # The build then runs on the same Node version CI just tested against.
+      - run: npm ci
+      - run: npx vercel pull --yes --environment=${{ steps.target.outputs.environment }} --token=${{ secrets.VERCEL_TOKEN }}
+      - run: npx vercel build ${{ steps.target.outputs.flag }} --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Deploy
+        id: deploy
+        run: |
+          url=$(npx vercel deploy --prebuilt ${{ steps.target.outputs.flag }} --token=${{ secrets.VERCEL_TOKEN }})
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "Deployed ${{ steps.target.outputs.environment }}: $url" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Comment the preview URL on the pull request
+        if: steps.target.outputs.environment == 'preview'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const url = "${{ steps.deploy.outputs.url }}";
+            const sha = "${{ github.event.workflow_run.head_sha }}";
+            const { data: prs } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: sha,
+            });
+            const open = prs.find((pr) => pr.state === "open");
+            if (!open) return;
+
+            const body = `Preview deployed: ${url}`;
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: open.number,
+            });
+            // Update the existing comment rather than adding one per push.
+            const mine = comments.find(
+              (c) => c.user.type === "Bot" && c.body.startsWith("Preview deployed:"),
+            );
+            if (mine) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: mine.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: open.number,
+                body,
+              });
+            }
