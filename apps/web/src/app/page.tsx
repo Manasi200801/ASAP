@@ -17,6 +17,16 @@ export default function Page() {
   const busy = run.state === "extracting" || run.state === "validating" || run.state === "posting";
   const started = run.state !== "idle";
 
+  // Counted from the rows as they settle, not from the closing `summary` event.
+  // Reading the summary alone leaves the header on 0/0/0 for the whole run, which
+  // contradicts a table the user can already see resolving in front of them.
+  const ready = run.invoices.filter((i) => i.status === "ready" || i.status === "parked").length;
+  const blocked = run.invoices.filter((i) => i.status === "blocked").length;
+  const checks = run.invoices.reduce(
+    (total, i) => total + i.rules.filter((r) => r.status !== "skip").length,
+    0,
+  );
+
   function toggleSlow() {
     const next = !slow;
     setSlow(next);
@@ -55,13 +65,16 @@ export default function Page() {
             }`}
           >
             <span>
-              <b className="font-medium text-ink">{run.summary?.ready ?? 0}</b> {t("ready")}
+              <b className="font-medium text-ok">{ready}</b> {t("ready")}
             </span>
             <span>
-              <b className="font-medium text-ink">{run.summary?.blocked ?? 0}</b> {t("blocked")}
+              <b className={blocked ? "font-medium text-blocked" : "font-medium text-ink"}>
+                {blocked}
+              </b>{" "}
+              {t("blocked")}
             </span>
             <span>
-              <b className="font-medium text-ink">{run.summary?.rulesRun ?? 0}</b> {t("checks")}
+              <b className="font-medium text-ink">{checks}</b> {t("checks")}
             </span>
             <span className="text-ink-faint">{t("period")}</span>
           </div>

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import pathlib
 from typing import AsyncIterator
 
 from fastapi import FastAPI
@@ -11,10 +12,22 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from . import events as ev
-from .judge import build_judge
-from .orchestrator import RunStore, post_run, validate_run
-from .sap import build_sap
+# Load .env.local before anything reads os.getenv. Without this a teammate can
+# write a perfectly correct .env.local and have it silently ignored, which looks
+# exactly like a broken backend.
+try:
+    from dotenv import load_dotenv
+
+    _root = pathlib.Path(__file__).resolve().parents[1]
+    for _name in (".env.local", ".env"):
+        load_dotenv(_root / _name, override=False)
+except ImportError:  # pragma: no cover - dotenv is optional
+    pass
+
+from . import events as ev  # noqa: E402
+from .judge import build_judge  # noqa: E402
+from .orchestrator import RunStore, post_run, validate_run  # noqa: E402
+from .sap import build_sap  # noqa: E402
 
 ACCOUNT = os.getenv("AWS_ACCOUNT_ID", "516359819848")
 
