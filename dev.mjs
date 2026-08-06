@@ -1,0 +1,134 @@
+#!/usr/bin/env node
+/**
+ * Runs apps/web (Next.js) and apps/agent (uvicorn) together, interleaving their
+ * output with a per-process prefix. No dependencies — node:child_process only.
+ *
+ *   npm run dev
+ *   WEB_PORT=3001 AGENT_PORT=8023 npm run dev
+ *
+ * The web app is told where the agent is via AGENT_ENDPOINT, which Next reads
+ * ahead of apps/web/.env.local (Next never overwrites an inherited env var), so
+ * AGENT_PORT alone is enough to move both halves.
+ */
+import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+
+const root = import.meta.dirname;
+const win = process.platform === "win32";
+const colour = Boolean(process.stdout.isTTY) && !process.env.NO_COLOR;
+const paint = (code, text) => (colour ? `\x1b[${code}m${text}\x1b[0m` : text);
+
+const WEB_PORT = process.env.WEB_PORT || "3000";
+const AGENT_PORT = process.env.AGENT_PORT || "8000";
+
+// Windows puts the venv interpreter in Scripts/, macOS and Linux in bin/.
+const python = ["Scripts/python.exe", "bin/python", "bin/python3"]
+  .map((rel) => join(root, "apps", "agent", ".venv", rel))
+  .find(existsSync);
+
+if (!python) {
+  console.error(
+    "No virtualenv found at apps/agent/.venv — run the agent setup in README.md first.",
+  );
+  process.exit(1);
+}
+
+const specs = [
+  {
+    name: "web",
+    colour: 36, // cyan
+    // npm is npm.cmd on Windows, and since Node 20.12 spawning a .cmd without a
+    // shell throws EINVAL — hence both of these. The args are all literals, so
+    // there is nothing for cmd.exe to mis-quote.
+    cmd: win ? "npm.cmd" : "npm",
+    shell: win,
+    args: ["run", "dev", "--", "--port", WEB_PORT],
+    cwd: join(root, "apps", "web"),
+    env: {
+      AGENT_ENDPOINT: process.env.AGENT_ENDPOINT || `http://localhost:${AGENT_PORT}`,
+    },
+  },
+  {
+    name: "agent",
+    colour: 35, // magenta
+    cmd: python,
+    args: ["-m", "uvicorn", "app.main:app", "--reload", "--port", AGENT_PORT],
+    cwd: join(root, "apps", "agent"),
+    env: { PYTHONUNBUFFERED: "1" },
+  },
+];
+
+const width = Math.max(...specs.map((s) => s.name.length));
+const write = (spec, text) =>
+  process.stdout.write(`${paint(spec.colour, `[${spec.name.padEnd(width)}]`)} ${text}\n`);
+
+/** Emit whole lines only, so two chatty processes never split each other mid-line. */
+function prefix(spec, stream) {
+  let rest = "";
+  stream.setEncoding("utf8");
+  stream.on("data", (chunk) => {
+    const lines = (rest + chunk).split(/\r?\n/);
+    rest = lines.pop() ?? "";
+    for (const line of lines) write(spec, line);
+  });
+  stream.on("end", () => {
+    if (rest) write(spec, rest);
+  });
+}
+
+const children = [];
+let stopping = false;
+
+function stop(code) {
+  if (stopping) return;
+  stopping = true;
+  process.exitCode = code;
+  for (const child of children) {
+    if (child.exitCode !== null || child.signalCode !== null) continue;
+    try {
+      // Both children spawn their own children (Next workers, the uvicorn
+      // reloader), so kill the tree rather than just the process we hold.
+      if (win) spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], { stdio: "ignore" });
+      else process.kill(-child.pid, "SIGTERM");
+    } catch {
+      // Already gone. Nothing to do.
+    }
+  }
+  // Backstop for a child that ignores the signal. Unref'd so a clean exit is
+  // still immediate.
+  setTimeout(() => process.exit(code), 5000).unref();
+}
+
+for (const spec of specs) {
+  const child = spawn(spec.cmd, spec.args, {
+    cwd: spec.cwd,
+    env: { ...process.env, ...spec.env },
+    stdio: ["ignore", "pipe", "pipe"],
+    shell: Boolean(spec.shell),
+    // POSIX: own process group, so process.kill(-pid) reaches the whole tree.
+    // Windows has no groups here; taskkill /t does the same job.
+    detached: !win,
+  });
+
+  child.on("error", (error) => {
+    write(spec, `failed to start (${spec.cmd}): ${error.message}`);
+    stop(1);
+  });
+
+  child.on("exit", (code, signal) => {
+    if (stopping) return;
+    write(spec, `exited with ${signal ? `signal ${signal}` : `code ${code}`}. Stopping the other process.`);
+    stop(code ?? 1);
+  });
+
+  prefix(spec, child.stdout);
+  prefix(spec, child.stderr);
+  children.push(child);
+}
+
+for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => stop(0));
+
+console.log(
+  `web  -> http://localhost:${WEB_PORT}\nagent -> http://localhost:${AGENT_PORT}   (Ctrl+C stops both)\n`,
+);

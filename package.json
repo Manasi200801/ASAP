@@ -1,0 +1,12 @@
+{
+  "name": "seeburg-aug-26-strike",
+  "private": true,
+  "type": "module",
+  "description": "Dev runner only. apps/web and apps/agent manage their own dependencies; this is deliberately not an npm workspace.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "node dev.mjs"
+  }
+}
