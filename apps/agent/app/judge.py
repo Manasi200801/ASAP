@@ -174,11 +174,24 @@ class BedrockJudge:
 
     def __init__(self, sop_knowledge_base_id: str | None = None) -> None:
         self.sop_knowledge_base_id = sop_knowledge_base_id
+        self._policy: dict[str, str] = {}
 
     def _sop(self, query: str) -> str:
-        """Ground policy questions in the SOP knowledge base, when one exists."""
+        """Ground policy questions in the SOP knowledge base, when one exists.
+
+        Cached per query for the life of the process. The orchestrator judges one
+        invoice at a time, so an uncached lookup repeats the same retrieval - same
+        query, same answer - once per invoice, and every repeat is latency inside
+        the validation cascade. Policy does not change mid-run.
+
+        The cost is that re-ingesting the knowledge base needs a restart to take
+        effect. That is the right trade while a run lasts seconds and a policy
+        revision is a quarterly event.
+        """
         if not self.sop_knowledge_base_id:
             return ""
+        if query in self._policy:
+            return self._policy[query]
         import boto3
 
         client = boto3.client(
@@ -190,7 +203,8 @@ class BedrockJudge:
         passages = [
             r.get("content", {}).get("text", "") for r in found.get("retrievalResults", [])
         ]
-        return "\n\n".join(p for p in passages if p)
+        self._policy[query] = "\n\n".join(p for p in passages if p)
+        return self._policy[query]
 
     async def _judge(
         self, rule_id: int, label: str, question: str, inv: Extracted, po: PurchaseOrder | None,
@@ -205,12 +219,21 @@ class BedrockJudge:
             prompt += f"\n\nRelevant standard operating procedure:\n{policy}"
 
         answer = await asyncio.to_thread(ask_json, JUDGE_SYSTEM, prompt)
+        citation = f"A_BusinessPartner('{inv.vendor}')" if rule_id == 4 else None
+        if citation is None and policy:
+            # Name the document the model actually read. Taking the heading from the
+            # retrieved passage rather than hardcoding an SOP number means the chip
+            # stays honest if the knowledge base contents change.
+            citation = next(
+                (line.lstrip("# ").strip() for line in policy.splitlines() if line.startswith("#")),
+                "SOP knowledge base",
+            )
         return _judged(
             rule_id,
             label,
             bool(answer.get("passed")),
             str(answer.get("reasoning", "")).strip(),
-            citation=f"A_BusinessPartner('{inv.vendor}')" if rule_id == 4 else None,
+            citation=citation,
         )
 
     async def supplier_matches(self, inv: Extracted, po: PurchaseOrder | None) -> RuleResult:

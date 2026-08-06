@@ -11,11 +11,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import time
 from typing import Protocol
 
 from .types import GoodsReceipt, Parked, PurchaseOrder
+
+log = logging.getLogger("app.sap")
 
 COMPANY_CODE = "1010"
 
@@ -179,6 +182,8 @@ class McpSap:
         """One MCP tools/call. Blocking - callers wrap it in a thread."""
         import requests
 
+        started = time.perf_counter()
+
         agent_arn, _ = self._config()
         encoded = agent_arn.replace(":", "%3A").replace("/", "%2F")
         endpoint = (
@@ -205,9 +210,15 @@ class McpSap:
             },
             timeout=120,
         )
+        ms = (time.perf_counter() - started) * 1000
+        # The entity, not the whole URL - the base path is the same every time and
+        # only the tail says which object was read.
+        entity = url.rsplit("/", 1)[-1][:90]
         if response.status_code != 200:
+            log.error("%s %s -> HTTP %d in %.0fms", method, entity, response.status_code, ms)
             raise SapError(f"SAP is not responding ({response.status_code}).")
 
+        log.info("%s %s -> ok in %.0fms", method, entity, ms)
         return self._unwrap(response.text)
 
     @staticmethod
