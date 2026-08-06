@@ -290,7 +290,7 @@ Terminal. The run moves to `failed`.
 | 13 | GR quantity sufficient | rule |
 | 14 | Tax code valid for company code | rule |
 | 15 | *(to be filled from Lab 06 Step 3)* | — |
-| 16 | Not a duplicate reference | rule |
+| 16 | Not a duplicate | rule |
 
 Rules 4, 7, and 9 are where deterministic comparison gives up and judgment starts. Everything
 else is arithmetic or lookup, and belongs in code.
@@ -355,6 +355,26 @@ purchase order and creates no accounting entry. **Never post for payment.**
 `DocumentDate` and `PostingDate` **must** be `2025-03-15`. The workshop SAP books run in early
 2025; today's date fails with a posting-period error. The UI surfaces the posting period as a
 chip so the handling is visible rather than hidden.
+
+### Duplicate documents
+
+Three different things, caught in three different places, because no single check covers them:
+
+| What | Where | Result |
+|---|---|---|
+| Byte-identical file, dropped twice | browser, SHA-256 before upload | never uploaded; the chip is struck through and named |
+| Same invoice, different file, same batch | `mark_duplicates`, before any rule runs | rule 16 fails, row blocked |
+| Same invoice, already parked in SAP | rule 16, via `reference_exists` | rule 16 fails, row blocked |
+
+The middle one is the dangerous one and the only one nothing used to catch. Neither copy has
+been parked yet, and the orchestrator assigns every row its own fresh reference — so all sixteen
+checks pass on both copies and the supplier is paid twice. Identity is the supplier plus their
+invoice number, never the file name: the same invoice forwarded twice arrives under two names,
+which is precisely the case worth catching.
+
+Hashes are remembered for the browser session, so re-dropping a file ten minutes later is still
+caught. They are not remembered across reloads — that would need storage, and the SAP-side check
+already covers anything that was actually parked.
 
 ### Re-run safety
 

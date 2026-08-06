@@ -6,6 +6,7 @@ import { CallRail } from "@/components/call-rail";
 import { Composer } from "@/components/composer";
 import { MAX_FILES } from "@/lib/events";
 import { useLocale } from "@/lib/i18n";
+import type { Duplicate } from "@/lib/use-run";
 import { useRun } from "@/lib/use-run";
 import { useState } from "react";
 
@@ -15,6 +16,7 @@ export default function Page() {
   const [files, setFiles] = useState<string[]>([]);
   const [slow, setSlow] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [repeats, setRepeats] = useState<Duplicate[]>([]);
 
   const busy =
     uploading ||
@@ -44,6 +46,7 @@ export default function Page() {
   async function begin(message?: string) {
     reset();
     setFiles([]);
+    setRepeats([]);
     // No documents means the demo batch, and it says so rather than relying on
     // the agent to guess from an empty key list.
     await start(locale, message, { sample: true });
@@ -60,14 +63,24 @@ export default function Page() {
 
     const runId = `r_${Math.random().toString(36).slice(2, 8)}`;
     reset();
+    setRepeats([]);
     // Acknowledge receipt before any work begins - the chips appear immediately,
     // separately from the upload, so a dropped file never looks ignored.
     setFiles(dropped.map((f) => f.name));
     setUploading(true);
 
     try {
-      const keys = await upload(runId, dropped);
+      const { keys, duplicates } = await upload(runId, dropped);
       setUploading(false);
+      setRepeats(duplicates);
+
+      if (keys.length === 0) {
+        // Every file was one we have already read. Nothing to check, and saying
+        // so is more useful than an empty run that appears to have done work.
+        fail(t("allDuplicates"));
+        return;
+      }
+
       await start(locale, undefined, { keys, runId });
     } catch (error) {
       setUploading(false);
@@ -124,16 +137,32 @@ export default function Page() {
                   {t("you")}
                 </div>
                 <div className="flex flex-wrap gap-1.5">
-                  {files.map((name, index) => (
-                    <span
-                      key={name}
-                      style={{ animationDelay: `${index * 30}ms` }}
-                      className="chip-in rounded border border-line bg-surface-2 px-1.5 py-0.5 font-data text-[11px] text-ink-dim"
-                    >
-                      {name}
-                    </span>
-                  ))}
+                  {files.map((name, index) => {
+                    // A repeated file stays visible, labelled. Removing it from
+                    // the list would leave the person wondering which of the ten
+                    // they dropped went missing.
+                    const repeat = repeats.find((d) => d.name === name);
+                    return (
+                      <span
+                        key={name}
+                        style={{ animationDelay: `${index * 30}ms` }}
+                        className={`chip-in rounded border px-1.5 py-0.5 font-data text-[11px] ${
+                          repeat
+                            ? "border-line bg-surface-2 text-ink-faint line-through"
+                            : "border-line bg-surface-2 text-ink-dim"
+                        }`}
+                        title={repeat ? t("duplicateOf", { of: repeat.of }) : undefined}
+                      >
+                        {name}
+                      </span>
+                    );
+                  })}
                 </div>
+                {repeats.length > 0 ? (
+                  <p className="max-w-[62ch] text-[13px] text-ink-faint">
+                    {t("duplicatesSkipped", { count: repeats.length })}
+                  </p>
+                ) : null}
               </div>
             ) : null}
 

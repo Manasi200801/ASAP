@@ -106,6 +106,41 @@ def test_park_payload_parks_and_never_posts() -> None:
     assert payload["to_SuplrInvcItemPurOrdRef"][0]["PurchaseOrder"] == inv.purchase_order
 
 
+def test_the_same_invoice_twice_in_one_batch_is_blocked() -> None:
+    """The duplicate SAP cannot catch.
+
+    Neither copy has been parked, and each row is given its own fresh reference,
+    so every check passes on both and the supplier is paid twice.
+    """
+    from app.orchestrator import mark_duplicates
+    from app.rules import not_duplicate
+
+    original, repeat = sample_batch()[0], sample_batch()[0]
+    # The same invoice forwarded twice arrives under a different file name, which
+    # is why identity is the supplier and their invoice number, not the file.
+    repeat.file = "forwarded-again.pdf"
+    batch = [original, repeat]
+
+    mark_duplicates(batch)
+
+    assert original.duplicate_of is None, "the first copy is not a duplicate of anything"
+    assert repeat.duplicate_of == original.file, "the repeat names the file it repeats"
+
+    assert not_duplicate(original, None, None).passed, "the original must still pass rule 16"
+    verdict = not_duplicate(repeat, None, None)
+    assert not verdict.passed, "the repeat must fail rule 16"
+    assert original.file in (verdict.detail or ""), "the reason must name the earlier file"
+
+
+def test_distinct_invoices_from_one_supplier_are_not_duplicates() -> None:
+    """Four of the demo invoices share a supplier. None of them repeat."""
+    from app.orchestrator import mark_duplicates
+
+    batch = sample_batch()
+    mark_duplicates(batch)
+    assert all(i.duplicate_of is None for i in batch), "distinct invoices must not be flagged"
+
+
 if __name__ == "__main__":
     passed = 0
     for name, fn in sorted(globals().items()):

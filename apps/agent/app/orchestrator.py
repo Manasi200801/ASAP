@@ -128,6 +128,29 @@ def _rule_event(run: Run, inv: Extracted, result: RuleResult) -> ev.Rule:
     )
 
 
+def mark_duplicates(invoices: list[Extracted]) -> None:
+    """Flag any invoice already billed by an earlier file in the same batch.
+
+    This is the duplicate SAP cannot catch. Neither copy has been parked yet, and
+    the orchestrator gives every row its own fresh reference, so all sixteen
+    checks pass on both and the supplier is paid twice.
+
+    Identity is the supplier and their invoice number, not the file name - the
+    same invoice forwarded twice arrives under two different names, which is
+    exactly the case worth catching. A document with no invoice number cannot be
+    compared, so it is left alone rather than guessed at.
+    """
+    seen: dict[tuple[str, str], str] = {}
+    for inv in invoices:
+        if not inv.supplier_invoice_id:
+            continue
+        identity = (inv.vendor, inv.supplier_invoice_id)
+        if identity in seen:
+            inv.duplicate_of = seen[identity]
+        else:
+            seen[identity] = inv.file
+
+
 async def _prepare(
     inv: Extracted, sap: Sap, judge: Judge, gate: asyncio.Semaphore
 ) -> tuple[
@@ -206,6 +229,8 @@ async def validate_run(
             recoverable=True,
         )
         return
+    mark_duplicates(run.invoices)
+
     for index, inv in enumerate(run.invoices):
         inv.reference = run.reference_for(index)
         inv.posting_date = POSTING_DATE

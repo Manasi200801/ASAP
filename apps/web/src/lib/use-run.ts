@@ -9,6 +9,18 @@ export type Summary = Extract<RunEvent, { type: "summary" }>;
 
 export type Message = { role: "you" | "agent"; text: string };
 
+/** A file identical to one already seen, and the file it repeats. */
+export type Duplicate = { name: string; of: string };
+
+export type UploadResult = { keys: string[]; duplicates: Duplicate[] };
+
+async function sha256(file: File): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 export type Run = {
   state: RunState;
   runId: string | null;
@@ -137,6 +149,8 @@ function apply(run: Run, event: RunEvent): Run {
 export function useRun() {
   const [run, setRun] = useState<Run>(EMPTY);
   const token = useRef(0);
+  // Content hashes seen this session, mapped to the file they arrived as.
+  const seen = useRef(new Map<string, string>());
 
   const consume = useCallback(async (response: Response, currentToken: number) => {
     for await (const event of readEventStream(response)) {
@@ -174,13 +188,34 @@ export function useRun() {
     [consume],
   );
 
-  const upload = useCallback(async (runId: string, files: File[]): Promise<string[]> => {
+  const upload = useCallback(async (runId: string, files: File[]): Promise<UploadResult> => {
+    // Byte-identical files, caught before anything is uploaded or read. Dropping
+    // the same document twice is an ordinary slip - two people forwarding the
+    // same attachment - and there is no reason to pay S3 and a model to discover
+    // it. Hashes are also remembered across drops in this session, so uploading
+    // the same file again ten minutes later is still caught.
+    const unique: File[] = [];
+    const duplicates: Duplicate[] = [];
+
+    for (const file of files) {
+      const digest = await sha256(file);
+      const original = seen.current.get(digest);
+      if (original) {
+        duplicates.push({ name: file.name, of: original });
+        continue;
+      }
+      seen.current.set(digest, file.name);
+      unique.push(file);
+    }
+
+    if (unique.length === 0) return { keys: [], duplicates };
+
     const response = await fetch("/api/upload", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         runId,
-        files: files.map((f) => ({ name: f.name, size: f.size, type: f.type })),
+        files: unique.map((f) => ({ name: f.name, size: f.size, type: f.type })),
       }),
     });
 
@@ -197,7 +232,7 @@ export function useRun() {
     // there is no request-body limit to hit.
     await Promise.all(
       uploads.map(async (target) => {
-        const file = files.find((f) => f.name === target.name);
+        const file = unique.find((f) => f.name === target.name);
         if (!file) return;
         const put = await fetch(target.url, {
           method: "PUT",
@@ -208,7 +243,7 @@ export function useRun() {
       }),
     );
 
-    return uploads.map((u) => u.key);
+    return { keys: uploads.map((u) => u.key), duplicates };
   }, []);
 
   const ask = useCallback(

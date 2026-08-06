@@ -40,5 +40,8 @@
   "decidedByAgent": "decided by agent",
   "uploading": "Uploading your documents…",
   "tooMany": "Up to {max} documents at a time.",
-  "uploadFailed": "The documents could not be uploaded."
+  "uploadFailed": "The documents could not be uploaded.",
+  "allDuplicates": "Every document you dropped is one already read in this session. Nothing to check.",
+  "duplicateOf": "Identical to {of}",
+  "duplicatesSkipped": "{count} identical to a document already read — skipped, not uploaded."
 }

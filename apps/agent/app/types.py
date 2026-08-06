@@ -34,6 +34,11 @@ class Extracted:
     posting_date: str = ""
     existing_reference: str | None = None
 
+    # The file earlier in this same batch that bills the same supplier invoice.
+    # Nothing in SAP can catch this one: neither has been parked yet, and each
+    # row is assigned its own fresh reference, so both would post cleanly.
+    duplicate_of: str | None = None
+
     confidence: dict[str, float] = field(default_factory=dict)
 
 
