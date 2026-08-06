@@ -163,7 +163,18 @@ def save_run(run: Any) -> None:
         )
 
         for inv in run.invoices:
-            verdict = "blocked" if inv.invoice_id in run.blocked else "ready"
+            # "parked" is a third verdict, not a flavour of ready. Once a document
+            # exists in SAP the invoice is no longer waiting for a decision, and
+            # answering "ready" to "what happened to FPL-1563?" is wrong in the
+            # one direction that matters - it invites approving it twice.
+            document = run.sap_documents.get(inv.invoice_id)
+            verdict = (
+                "parked"
+                if document
+                else "blocked"
+                if inv.invoice_id in run.blocked
+                else "ready"
+            )
             connection.execute(
                 """
                 INSERT INTO invoices (
@@ -326,7 +337,7 @@ def search_invoices(
         where.append("run_id = ?")
         values.append(run_id)
 
-    if status in ("ready", "blocked"):
+    if status in ("ready", "blocked", "parked"):
         where.append("verdict = ?")
         values.append(status)
 
@@ -415,6 +426,7 @@ def totals(run: str | None = None, status: str | None = None) -> dict:
         "invoices": len(rows),
         "ready": sum(1 for row in rows if row["verdict"] == "ready"),
         "blocked": sum(1 for row in rows if row["verdict"] == "blocked"),
+        "parked": sum(1 for row in rows if row["verdict"] == "parked"),
         "net_total": f"{net:.2f}" if calculable else "not calculable",
         "gross_total": f"{gross:.2f}" if calculable else "not calculable",
         "currency": currencies.pop() if len(currencies) == 1 else "mixed",

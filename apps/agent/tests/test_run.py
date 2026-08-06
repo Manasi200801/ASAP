@@ -234,6 +234,15 @@ def test_the_agent_can_query_what_a_run_wrote() -> None:
     assert Decimal(totals["gross_total"]) == expected, totals
     assert totals["ready"] == 5 and totals["blocked"] == 0, totals
 
+    # Parking moves an invoice out of "ready" entirely. Answering "ready" for a
+    # document that already exists in SAP invites approving it a second time.
+    asyncio.run(collect(post_run(run, sap)))
+    after = dispatch("invoice_detail", {"invoice": "FPL-1563"})
+    assert after["verdict"] == "parked", after["verdict"]
+    assert after["sap_document"], "and it must carry the document number"
+    assert dispatch("batch_totals", {})["ready"] == 0, "nothing is still awaiting approval"
+    assert dispatch("batch_totals", {})["parked"] == 5
+
 
 def test_a_question_survives_the_process_that_ran_the_batch() -> None:
     """The store is in memory; the answers are not.

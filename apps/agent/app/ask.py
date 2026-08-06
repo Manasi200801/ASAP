@@ -208,9 +208,11 @@ TOOLS = [
                 "all of those fields at once, so 'FPL-99', '17401710' and '4500001463' all "
                 "find what you would expect; a term that matches nothing comes back as an "
                 "empty list, which means the document is not in the database rather than "
-                "that the search failed. Each result carries the invoice's amounts, its "
-                "verdict of ready or blocked and, when blocked, the one-sentence headline "
-                "saying why. It does not return the individual checks, their reasoning or "
+                "that the search failed. Each result carries the invoice's amounts and its "
+                "verdict: ready means it passed every check and is waiting for a person to "
+                "approve it, parked means it is already a draft document in SAP and needs "
+                "nothing further, and blocked comes with a one-sentence headline saying "
+                "why. It does not return the individual checks, their reasoning or "
                 "the policies they cite - call invoice_detail for those - and it returns no "
                 "sums, counts or averages of any kind."
             ),
@@ -224,7 +226,7 @@ TOOLS = [
                         },
                         "status": {
                             "type": "string",
-                            "enum": ["ready", "blocked"],
+                            "enum": ["ready", "blocked", "parked"],
                             "description": "Restrict to one verdict.",
                         },
                         "run": {

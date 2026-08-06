@@ -11,7 +11,7 @@
   "loadBatch": "Load sample batch",
   "seed1": "Process the FPL batch",
   "seed2": "Why was FPL-9999 blocked?",
-  "seed3": "Show open POs for 17401710",
+  "seed3": "What is ready to approve, and for how much?",
   "askPlaceholder": "Ask about a run, a supplier, or a purchase order…",
   "colInvoice": "Invoice",
   "colPo": "Purchase order",
@@ -55,7 +55,7 @@
   "autoChecksPassed": "{count} automatic checks passed",
   "approveOne": "Approve",
   "retryOne": "Retry",
-  "stParking": "parkingâ€¦",
+  "stParking": "parking…",
   "liveStatus": "Live status",
   "stageReceived": "Received",
   "stageExtract": "Extract",
@@ -64,5 +64,11 @@
   "stagePost": "Post",
   "toggleTheme": "Switch theme",
   "themeLight": "Light",
-  "themeDark": "Dark"
+  "themeDark": "Dark",
+  "send": "Send",
+  "emptyTitle": "Every supplier invoice checked against live SAP before a person approves it.",
+  "emptyBody": "Drop invoice PDFs or photos into the bar above, or load the sample batch to watch a full run end to end.",
+  "emptyStep1": "Reads each document and pulls out the supplier, purchase order, quantities and amounts.",
+  "emptyStep2": "Runs 16 checks against live S/4HANA — 13 arithmetic and lookup, 3 judged by the model.",
+  "emptyStep3": "Stops at one approval. Approving parks drafts in SAP. Nothing is ever paid automatically."
 }
