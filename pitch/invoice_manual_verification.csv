@@ -1,0 +1,19 @@
+Pos,Material / Supplier matl.,Description,Quantity,UoM,Price unit,Unit price EUR,Disc. %,Tax,Net amount EUR
+10,TG12 / 88-TG12-DE,"HAWA 12 - Trading Good / Handelsware; Carton of 10 PC, EAN 4006381333931",10,PC,1,11.3500,,V1 19%,113.60
+30,RM121 / RM-DC01-15,"Raw Material 121 - Steel sheet DC01, 1.5 mm; Heat no. 4471-B, EN 10130, cert. 3.1 attached",1500.000,KG,1,2.4750,,V1 19%,3712.50
+60,DOC100 / DOC-100-DE,"Printed technical documentation / operating manuals; Reduced VAT rate per 12(2) UStG",40,PC,1,12.5000,,V1 19%,500.00
+10,TG12 / 88-TG12-DE,"HAWA 12 - Trading Good / Handelsware; Carton of 10 PC, EAN 4006381333931",10,PC,1,11.3500,,V1 19%,113.50
+40,SG241 / SG-241-M,"Semifinished Good 241 - Gear housing, machined; Drawing 241-A rev. C; Batch 0000341788",80,PC,1,64.9000,2.5,V1 19%,5088.16
+20,TG11 / 88-TG11-DE,"HAWA 11 - Trading Good / Handelsware; Price per 100 PC",250,PC,1,42.8000,,V1 19%,107.00
+50,- / FRT-STD,"Freight / delivery costs (unplanned delivery costs); Consignment 80013301 + 80013317, FCA Mannheim",1,AU,1,185.0000,,V1 19%,185.00
+30,RM121 / RM-DC01-15,"Raw Material 121 - Steel sheet DC01, 1.5 mm; Heat no. 4471-B, EN 10130, cert. 3.1 attached",1500.500,KG,1,2.4750,,V1 19%,3712.50
+60,DOC100 / DOC-100-DE,"Printed technical documentation / operating manuals; Reduced VAT rate per 12(2) UStG",40,PC,1,12.5000,,V2 7%,500.00
+10,TG12 / 88-TG12-DE,"HAWA 12 - Trading Good / Handelsware; Carton of 10 PC, EAN 4006381333931",10,PC,1,11.3000,,V1 19%,113.50
+20,TG11 / 88-TG11-DE,"HAWA 11 - Trading Good / Handelsware; Price per 100 PC",250,PC,100,42.8000,,V1 19%,107.00
+50,- / FRT-STD,"Freight / delivery costs (unplanned delivery costs); Consignment 80013301 + 80013317, FCA Mannheim",1,AU,1,185.0000,,V1 19%,186.00
+40,SG241 / SG-241-M,"Semifinished Good 241 - Gear housing, machined; Drawing 241-A rev. C; Batch 0000341788",81,PC,1,64.9000,2.0,V1 19%,5088.16
+40,SG241 / SG-241-M,"Semifinished Good 241 - Gear housing, machined; Drawing 241-A rev. C; Batch 0000341788",80,PC,1,64.9000,2.0,V1 19%,5088.16
+60,DOC100 / DOC-100-DE,"Printed technical documentation / operating manuals; Reduced VAT rate per 12(2) UStG",40,PC,1,12.5500,,V2 7%,500.00
+20,TG11 / 88-TG11-DE,"HAWA 11 - Trading Good / Handelsware; Price per 100 PC",250,PC,100,42.8000,,V1 19%,107.50
+30,RM121 / RM-DC01-15,"Raw Material 121 - Steel sheet DC01, 1.5 mm; Heat no. 4471-B, EN 10130, cert. 3.1 attached",1500.000,KG,1,2.4850,,V1 19%,3712.50
+50,- / FRT-STD,"Freight / delivery costs (unplanned delivery costs); Consignment 80013301 + 80013317, FCA Mannheim",1,PC,1,185.0000,,V1 19%,185.00
