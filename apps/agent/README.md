@@ -94,12 +94,22 @@ reads them from Secrets Manager at runtime.
 
 ## Knowledge bases
 
-`SOP_KNOWLEDGE_BASE_ID` grounds rule 9. Without it the price check falls back to
-a flat 5% and says so; with it, rule 9 reads the tiered policy in `docs/sops/`
-and cites the document it consulted.
+Two, and they do different jobs.
+
+`SOP_KNOWLEDGE_BASE_ID` grounds rule 9 during validation. Without it the price
+check falls back to a flat 5% and says so; with it, rule 9 reads the tiered
+policy in `docs/sops/` and cites the document it consulted.
+
+`SAP_API_KNOWLEDGE_BASE_ID` backs the chat's `sap_reference` tool. It holds the
+OpenAPI specs for the four OData services this system calls, so a question about
+what a SAP field means is answered from SAP's own documentation. When it has
+nothing on the subject the agent says so rather than filling the gap from memory
+— which it does, verifiably: asked what supplier invoice status `A` means, it
+reports that the spec names the field but not the code values.
 
 ```bash
-python scripts/make_kb.py sops       # rebuilds it end to end, about 90 seconds
+python scripts/make_kb.py sops       # rebuilds either one end to end,
+python scripts/make_kb.py sap-api    # about 90 seconds each
 ```
 
 ## Two ways into `/chat`
@@ -113,13 +123,19 @@ Same endpoint, two behaviours, and the distinction matters:
 ## How the chat answers
 
 Nothing about the batch is written into the prompt. The model gets a job
-description and three tools over `db.py`, and fetches what it needs:
+description and four tools, and fetches what it needs:
 
-| Tool | Answers |
-|---|---|
-| `search_invoices` | "which ones are blocked?", "anything from 17401710?" |
-| `invoice_detail` | "why was FPL-9999 blocked?" — every check, with reasoning and citation |
-| `batch_totals` | "what's ready to approve?" — summed in Python, never by the model |
+| Tool | Answers | Reads |
+|---|---|---|
+| `search_invoices` | "which ones are blocked?", "anything from 17401710?" | `db.py` |
+| `invoice_detail` | "why was FPL-9999 blocked?" — every check, with reasoning and citation | `db.py` |
+| `batch_totals` | "what's ready to approve?" — summed in Python, never by the model | `db.py` |
+| `sap_reference` | "what does GR-based invoice verification mean?" | SAP API knowledge base |
+
+The split matters: the first three answer what happened to a document, the fourth
+answers what SAP means by something. Without the fourth, a question about a field
+is answered from whatever the model remembers about SAP — which is exactly where
+a confident wrong answer costs the most.
 
 That is what makes it an assistant rather than a template. A greeting needs no
 rule in the prompt: there is nothing to look up, so nothing is looked up. A

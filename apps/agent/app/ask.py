@@ -13,11 +13,52 @@ looks nothing up and just answers.
 from __future__ import annotations
 
 import logging
+import os
 from typing import AsyncIterator
 
 from . import db
 
 log = logging.getLogger("app.ask")
+
+# Retrieved passages, cached per query for the life of the process. The same
+# question about the same field returns the same paragraph of a vendor spec that
+# changes when SAP ships a new API version, not while someone is typing.
+_reference: dict[str, list[dict]] = {}
+
+
+def sap_reference(query: str) -> list[dict]:
+    """Passages from the SAP OData API specifications, by meaning rather than keyword.
+
+    This is the second knowledge base: the OpenAPI documents for the services
+    this system actually calls. Without it, "what does gr_based_invoicing mean?"
+    is answered from whatever the model remembers about SAP, which is exactly the
+    kind of question where a confident wrong answer is expensive.
+    """
+    knowledge_base = os.getenv("SAP_API_KNOWLEDGE_BASE_ID")
+    if not knowledge_base:
+        return []
+    if query in _reference:
+        return _reference[query]
+
+    import boto3
+
+    client = boto3.client("bedrock-agent-runtime", region_name=os.getenv("AWS_REGION", "us-east-1"))
+    found = client.retrieve(
+        knowledgeBaseId=knowledge_base,
+        retrievalQuery={"text": query},
+        retrievalConfiguration={"vectorSearchConfiguration": {"numberOfResults": 4}},
+    )
+
+    passages = []
+    for result in found.get("retrievalResults", []):
+        text = result.get("content", {}).get("text", "")
+        if not text:
+            continue
+        source = result.get("location", {}).get("s3Location", {}).get("uri", "")
+        passages.append({"text": text[:2000], "source": source.rsplit("/", 1)[-1] or "SAP API spec"})
+
+    _reference[query] = passages
+    return passages
 
 # Written as prose in tagged sections, with no markdown anywhere in it. Anthropic
 # documents that prompt style leaks into answer style - "removing markdown from
@@ -49,8 +90,11 @@ nothing is paid as a result of it.
 </background_information>
 
 <tool_guidance>
-Your tools read the invoice database. Use your judgment about whether to call a
-tool or respond directly.
+Three of your tools read the invoice database - what was checked and what was
+decided. The fourth, sap_reference, reads SAP's own API documentation and knows
+nothing about any document; it is for questions about what SAP means by
+something, not about what happened to an invoice. Use your judgment about
+whether to call a tool or respond directly.
 
 A question that names or depends on a real invoice, supplier, purchase order,
 amount, count or decision is a question for the tools, and your answer must come
@@ -229,6 +273,41 @@ TOOLS = [
     },
     {
         "toolSpec": {
+            "name": "sap_reference",
+            "description": (
+                "Searches SAP's own OpenAPI specifications for the OData services this "
+                "system calls - supplier invoices, purchase orders, material documents and "
+                "business partners - and returns the passages that explain them. Use it "
+                "when a question is about SAP itself rather than about a document: what a "
+                "field means, what an entity contains, what a code or status value stands "
+                "for, or which fields an API accepts. Ask in your own words, such as 'what "
+                "does GR-based invoice verification mean' or 'supplier invoice status "
+                "values' - it matches on meaning, not on exact field names. It returns "
+                "vendor documentation written for developers, so translate what you find "
+                "into the language a clerk uses rather than pasting it back. It knows "
+                "nothing about any actual invoice, batch or check result, and an empty "
+                "result means this knowledge base is unavailable or has nothing on the "
+                "subject, not that the field does not exist."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": (
+                                "What you want to understand, in plain words. A phrase works "
+                                "better than a single field name."
+                            ),
+                        }
+                    },
+                    "required": ["query"],
+                }
+            },
+        }
+    },
+    {
+        "toolSpec": {
             "name": "batch_totals",
             "description": (
                 "Counts and summed amounts for a batch, calculated with exact decimal "
@@ -280,6 +359,10 @@ def dispatch(name: str, arguments: dict) -> dict:
 
     if name == "batch_totals":
         return db.totals(run=arguments.get("run"), status=arguments.get("status"))
+
+    if name == "sap_reference":
+        passages = sap_reference(str(arguments.get("query", "")))
+        return {"passages": passages, "count": len(passages)}
 
     return {"error": f"No tool named {name}."}
 

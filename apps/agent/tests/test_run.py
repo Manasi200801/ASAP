@@ -237,6 +237,23 @@ def test_a_half_finished_turn_cannot_break_the_next_question() -> None:
     assert [message["role"] for message in opening] == ["user"]
 
 
+def test_the_reference_tool_says_nothing_rather_than_guessing() -> None:
+    """No knowledge base configured must not become an answer from memory.
+
+    A teammate without the env var should get an agent that says it cannot look
+    the field up - not one that invents SAP semantics confidently.
+    """
+    from app.ask import dispatch
+
+    configured = os.environ.pop("SAP_API_KNOWLEDGE_BASE_ID", None)
+    try:
+        empty = dispatch("sap_reference", {"query": "GR-based invoice verification"})
+        assert empty["count"] == 0 and empty["passages"] == []
+    finally:
+        if configured is not None:
+            os.environ["SAP_API_KNOWLEDGE_BASE_ID"] = configured
+
+
 def test_the_prompt_is_written_the_way_the_answer_must_read() -> None:
     """Prompt style leaks into answer style, and this answer is rendered as raw text.
 
