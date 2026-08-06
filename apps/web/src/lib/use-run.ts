@@ -322,9 +322,9 @@ export function useRun() {
           const detail = await put.text().catch(() => "");
           const code = /<Code>([^<]+)<\/Code>/.exec(detail)?.[1];
           const said = /<Message>([^<]+)<\/Message>/.exec(detail)?.[1];
+          const because = said ? `: ${said}` : ".";
           throw new Error(
-            `${file.name} could not be uploaded (${put.status}${code ? ` ${code}` : ""})` +
-              (said ? `: ${said}` : "."),
+            `${file.name} could not be uploaded (${put.status}${code ? ` ${code}` : ""})${because}`,
           );
         }
       }),
