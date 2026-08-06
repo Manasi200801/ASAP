@@ -96,6 +96,15 @@ def test_reruns_do_not_collide_on_the_invoice_reference() -> None:
     assert not (firsts & seconds), "a second run must produce fresh references"
     assert all(len(r) <= 16 for r in firsts | seconds), "SAP caps the reference at 16 characters"
 
+    # A live park produced 516359819848-521 - already all sixteen characters. A
+    # sequence that simply grows reaches four digits within a few runs and SAP
+    # rejects the batch mid-demo. Seed at the top of the range and rehearse hard.
+    store._next_sequence = 890
+    for _ in range(40):
+        run = store.create(f"r_{_}", "516359819848", "en")
+        references = [run.reference_for(i) for i in range(10)]
+        assert all(len(r) <= 16 for r in references), references
+
 
 def test_park_payload_parks_and_never_posts() -> None:
     store = RunStore()

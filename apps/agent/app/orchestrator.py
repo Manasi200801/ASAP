@@ -92,18 +92,26 @@ class RunStore:
     clock means a restart cannot collide with an earlier session.
 
     The reference is `<12-digit account>-<n>` and SAP caps it at 16 characters,
-    so n has three digits to work with.
+    so n has exactly three digits to work with - `516359819848-521` is already
+    all sixteen. The sequence therefore wraps rather than growing: seeded at 880,
+    a third run of the session would otherwise ask SAP to accept a 17-character
+    reference and be rejected mid-demo for a reason that looks like nothing the
+    operator did.
     """
+
+    # Three digits, and a batch consumes one per invoice from its base.
+    SEQUENCE_CEILING = 899
+    SEQUENCE_STRIDE = 50
 
     def __init__(self) -> None:
         self._runs: dict[str, Run] = {}
-        self._next_sequence = int(time.time()) % 900 + 1
+        self._next_sequence = int(time.time()) % self.SEQUENCE_CEILING + 1
 
     def create(self, run_id: str, account: str, locale: str) -> Run:
         # Advance past whatever the previous run consumed, so re-runs never
-        # collide on the invoice reference.
+        # collide on the invoice reference, and wrap to stay inside three digits.
         run = Run(run_id=run_id, account=account, locale=locale, sequence_base=self._next_sequence)
-        self._next_sequence += 50
+        self._next_sequence = (self._next_sequence + self.SEQUENCE_STRIDE - 1) % self.SEQUENCE_CEILING + 1
         self._runs[run_id] = run
         return run
 
