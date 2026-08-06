@@ -315,6 +315,8 @@ purchase order and creates no accounting entry. **Never post for payment.**
 | SAP company code | `1010` (DE), plant `1010`, currency EUR |
 | SAP credentials | Secrets Manager, `sap-s4h-credentials` |
 | MCP server | AWS for SAP MCP Server (Lab 05), on AgentCore Runtime behind Cognito |
+| SOP knowledge base | `NKB8KVAZ45` — over `-sops`, read by rule 9. Build: `scripts/make_kb.py sops` |
+| SAP API knowledge base | `XVOHWDZ4UM` — over `-sap-api`, Lab 02 deliverable, not read at runtime |
 | Demo POs | `4500001463`, `4500001563`, `4500001638`, `4500001650`, `4500001697` (item 10) |
 | Deliberate failure | `4500009999` — does not exist |
 

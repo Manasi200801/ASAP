@@ -43,5 +43,9 @@ Thumbs.db
 # --- skills CLI cache ---
 .skills-cache/
 
+# Vendor OpenAPI specs downloaded from api.sap.com for the Lab 02 knowledge base.
+# 1.3 MB of generated schema that already lives in s3://516359819848-sap-api.
+apps/agent/scripts/sap-api/
+
 # Claude Code local settings (machine-specific paths)
 .claude/settings.local.json

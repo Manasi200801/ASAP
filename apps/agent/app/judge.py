@@ -205,12 +205,21 @@ class BedrockJudge:
             prompt += f"\n\nRelevant standard operating procedure:\n{policy}"
 
         answer = await asyncio.to_thread(ask_json, JUDGE_SYSTEM, prompt)
+        citation = f"A_BusinessPartner('{inv.vendor}')" if rule_id == 4 else None
+        if citation is None and policy:
+            # Name the document the model actually read. Taking the heading from the
+            # retrieved passage rather than hardcoding an SOP number means the chip
+            # stays honest if the knowledge base contents change.
+            citation = next(
+                (line.lstrip("# ").strip() for line in policy.splitlines() if line.startswith("#")),
+                "SOP knowledge base",
+            )
         return _judged(
             rule_id,
             label,
             bool(answer.get("passed")),
             str(answer.get("reasoning", "")).strip(),
-            citation=f"A_BusinessPartner('{inv.vendor}')" if rule_id == 4 else None,
+            citation=citation,
         )
 
     async def supplier_matches(self, inv: Extracted, po: PurchaseOrder | None) -> RuleResult:
