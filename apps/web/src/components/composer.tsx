@@ -13,12 +13,16 @@ import { useRef, useState } from "react";
 export function Composer({
   onSubmit,
   onFiles,
+  hasRun,
   disabled,
   uploading,
   t,
 }: {
+  /** A message asks a question. No message runs the sample batch. */
   onSubmit: (message?: string) => void;
   onFiles: (files: File[]) => void;
+  /** Whether there is a batch to ask questions about. */
+  hasRun: boolean;
   disabled: boolean;
   uploading: boolean;
   t: Translate;
@@ -68,13 +72,18 @@ export function Composer({
         </button>
       </div>
 
+      {/* Before a batch: the one thing worth doing. After it: the two questions
+          worth asking. Offering "why was FPL-9999 blocked?" on an empty screen
+          invites a click that can only be answered by first running a batch the
+          user did not ask for. */}
       <div className="flex flex-wrap gap-1.5">
-        {(["seed1", "seed2", "seed3"] as const).map((key) => (
+        {(hasRun ? (["seed2", "seed3"] as const) : (["seed1"] as const)).map((key) => (
           <button
             key={key}
             type="button"
             disabled={disabled}
-            onClick={() => onSubmit(t(key))}
+            // seed1 is the batch itself, not a question about one.
+            onClick={() => onSubmit(key === "seed1" ? undefined : t(key))}
             className="pressable cursor-pointer rounded-full border border-line bg-surface-3 px-2.5 py-1 text-[12px] text-ink-dim transition-colors hover:border-ink-faint hover:text-ink disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brass"
           >
             {t(key)}

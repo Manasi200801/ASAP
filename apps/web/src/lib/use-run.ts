@@ -7,7 +7,14 @@ import { readEventStream } from "./sse";
 
 export type Summary = Extract<RunEvent, { type: "summary" }>;
 
-export type Message = { role: "you" | "agent"; text: string };
+/**
+ * `streaming` marks the one bubble an answer is currently being typed into.
+ * The run's own `text` events are whole sentences and each deserves its own
+ * paragraph; an answer arrives as deltas that all have to land in one. Marking
+ * the message rather than the run is what makes that safe when a second
+ * question arrives before the first answer has finished.
+ */
+export type Message = { role: "you" | "agent"; text: string; streaming?: boolean };
 
 /** A file identical to one already seen, and the file it repeats. */
 export type Duplicate = { name: string; of: string };
@@ -32,9 +39,7 @@ export type Run = {
   readyIds: string[];
   blockedIds: string[];
   error: string | null;
-  // True while an answer is streaming back token by token. The run's own `text`
-  // events are whole sentences and each deserves its own paragraph; an answer
-  // arrives as deltas that have to land in one.
+  /** True while an answer is streaming back. Drives the disabled state, nothing else. */
   answering: boolean;
 };
 
@@ -132,7 +137,7 @@ function apply(run: Run, event: RunEvent): Run {
 
     case "text": {
       const last = run.messages.at(-1);
-      if (run.answering && last?.role === "agent") {
+      if (last?.role === "agent" && last.streaming) {
         return {
           ...run,
           messages: [...run.messages.slice(0, -1), { ...last, text: last.text + event.delta }],
@@ -248,16 +253,26 @@ export function useRun() {
 
   const ask = useCallback(
     async (locale: "en" | "de", message: string) => {
-      const current = token.current;
-      const runId = run.runId;
-      if (!runId) return;
+      // A new question abandons whatever was still streaming. Without this the
+      // two streams interleave, and the first one's `finally` clears the
+      // streaming flag mid-answer - which is how a reply ends up split across
+      // one paragraph per token, with the tail of the previous answer stranded
+      // under the next question.
+      const current = ++token.current;
+      // No run yet is a legitimate question, not a no-op. The agent says it has
+      // no batch to answer from, which beats a button that appears dead.
+      const runId = run.runId ?? "none";
 
       // Keep the run exactly as it is. A question must never clear the table the
       // question is about, and must never re-trigger validation.
       setRun((prev) => ({
         ...prev,
         answering: true,
-        messages: [...prev.messages, { role: "you", text: message }],
+        messages: [
+          ...prev.messages.map((m) => (m.streaming ? { ...m, streaming: false } : m)),
+          { role: "you", text: message },
+          { role: "agent", text: "", streaming: true },
+        ],
       }));
 
       try {
@@ -268,7 +283,18 @@ export function useRun() {
         });
         await consume(response, current);
       } finally {
-        setRun((prev) => ({ ...prev, answering: false }));
+        // Only the current answer may close itself. An abandoned stream that
+        // cleared the flag would leave the live answer appending nowhere.
+        if (token.current === current) {
+          setRun((prev) => ({
+            ...prev,
+            answering: false,
+            messages: prev.messages
+              // An answer that produced nothing leaves no empty bubble behind.
+              .filter((m) => m.text !== "" || !m.streaming)
+              .map((m) => (m.streaming ? { ...m, streaming: false } : m)),
+          }));
+        }
       }
     },
     [run.runId, consume],

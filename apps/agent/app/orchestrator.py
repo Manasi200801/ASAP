@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import AsyncIterator, Literal
 
+from . import db
 from . import events as ev
 from .extract import extract_batch
 from .judge import Judge
@@ -69,6 +70,7 @@ class Run:
     # version did and why asking a question re-ran six invoices.
     results: dict[str, list[RuleResult]] = field(default_factory=dict)
     headlines: dict[str, str] = field(default_factory=dict)
+    sap_documents: dict[str, str] = field(default_factory=dict)
 
     # Questions and answers, in order. Without it every question is the first
     # question: "why was that one blocked?" has no idea which one, and "and the
@@ -384,6 +386,10 @@ async def validate_run(
     await asyncio.sleep(BEAT * 0.7)
 
     run.state = "awaiting-approval"
+    # On disk before the run is handed to a human. Everything the chat can answer
+    # comes from here, so a question survives a reload, a restart, and the next
+    # batch replacing this one on screen.
+    db.save_run(run)
     yield ev.Approval(runId=run.run_id, readyIds=run.ready, blockedIds=run.blocked)
 
 
@@ -462,6 +468,7 @@ async def post_run(run: Run, sap: Sap) -> AsyncIterator[ev.Event]:
             parked.sap_document,
             inv.reference,
         )
+        run.sap_documents[inv.invoice_id] = parked.sap_document
         yield ev.Posting(
             invoiceId=inv.invoice_id,
             status="parked",
@@ -472,6 +479,8 @@ async def post_run(run: Run, sap: Sap) -> AsyncIterator[ev.Event]:
         await asyncio.sleep(FLOOR_POSTING)
 
     run.state = "done"
+    # Again, so "what happened to FPL-1563?" can answer with its SAP document.
+    db.save_run(run)
     yield ev.Text(
         delta=(
             f"{len(run.ready)} parked documents in SAP, fiscal year 2025. "
@@ -480,144 +489,35 @@ async def post_run(run: Run, sap: Sap) -> AsyncIterator[ev.Event]:
     )
 
 
-ANSWER_SYSTEM = """You are the accounts payable assistant for a batch of supplier
-invoices that has already been checked against SAP S/4HANA.
+async def answer_run(
+    run: Run | None, message: str, locale: str = "en"
+) -> AsyncIterator[ev.Event]:
+    """Answer a typed question. Read-only, and it touches no state machine.
 
-Answer the user's question using only the run record you are given. The record is
-the complete result of the checks; it is not a summary you should second-guess.
-
-Rules:
-- Answer in plain business language. The reader approves invoices; they do not
-  know SAP field names or rule numbers, so translate rather than quote.
-- Be specific. Name invoices, amounts and suppliers from the record.
-- Amounts are in the currency stated in the record. Never convert them.
-- Totals are given to you already calculated. Quote them. Never add figures up
-  yourself and never present a sum the record does not state.
-- Plain text only. No markdown, no asterisks - the answer is rendered as-is.
-- If the record does not contain the answer, say so plainly and say what would.
-- Never suggest you can post, park, reverse or change anything. You can only
-  explain. Posting happens when the user presses Approve, never because of
-  something said in conversation.
-- Two or three sentences unless the question genuinely needs more. No headings,
-  no bullet lists.
-- A question may refer back to what was already discussed - "that one", "the
-  others", "why not". Resolve it against the earlier turns you are given, and
-  do not make the user repeat themselves.
-"""
-
-
-def _totals(run: Run) -> str:
-    """Sums, computed here rather than left to the model.
-
-    Asked for a batch total, a model will happily add the figures itself and get
-    it wrong - an early version answered 454.00 for invoices totalling 513.50.
-    Money arithmetic is not a judgement call, so it is done in Python and handed
-    over as a fact.
+    The run is optional. Everything answerable lives in the database, so a
+    question survives a restart, a reload, and a batch being replaced on screen -
+    which is why there is no longer a "I no longer have that batch" reply. The
+    run is passed only to carry the conversation forward within a session.
     """
-    from decimal import Decimal, InvalidOperation
+    from .ask import answer
 
-    def total(invoice_ids: list[str]) -> str:
-        amount = Decimal(0)
-        for inv in run.invoices:
-            if inv.invoice_id not in invoice_ids:
-                continue
-            try:
-                amount += Decimal(inv.gross_amount)
-            except InvalidOperation:  # an unparsable amount must not fake a total
-                return "not calculable"
-        return f"{amount:.2f}"
-
-    currencies = {inv.currency for inv in run.invoices} or {"EUR"}
-    currency = currencies.pop() if len(currencies) == 1 else "mixed currencies"
-    return (
-        f"Gross total ready to approve: {total(run.ready)} {currency}. "
-        f"Gross total blocked: {total(run.blocked)} {currency}."
-    )
-
-
-def _run_record(run: Run) -> str:
-    """The batch as text, for a question to be answered against."""
-    lines = [
-        f"Run {run.run_id}. State: {run.state}. "
-        f"{len(run.ready)} ready, {len(run.blocked)} blocked, "
-        f"{len(run.invoices)} invoices total.",
-        _totals(run),
-        "",
-    ]
-
-    for inv in run.invoices:
-        verdict = "blocked" if inv.invoice_id in run.blocked else "ready"
-        lines.append(
-            f"{inv.invoice_id} ({inv.file}) - {verdict}. "
-            f"Supplier invoice {inv.supplier_invoice_id}, supplier {inv.vendor}, "
-            f"purchase order {inv.purchase_order} item {inv.purchase_order_item}, "
-            f"{inv.quantity} {inv.unit} of {inv.material} at {inv.unit_price} each, "
-            f"net {inv.net_amount}, gross {inv.gross_amount} {inv.currency}, "
-            f"SAP reference {inv.reference or 'not yet assigned'}."
-        )
-        if inv.invoice_id in run.headlines:
-            lines.append(f"  Why it is blocked: {run.headlines[inv.invoice_id]}")
-
-        # Only the failures and the judged checks. Listing sixteen passes per
-        # invoice buries the two lines that actually answer anything.
-        for result in run.results.get(inv.invoice_id, []):
-            if result.passed and result.rule_id not in AGENT_RULE_IDS:
-                continue
-            decided = "judged by the agent" if result.rule_id in AGENT_RULE_IDS else "rule"
-            detail = result.detail or result.reasoning or ""
-            lines.append(
-                f"  Check {result.rule_id} '{result.label}': "
-                f"{'passed' if result.passed else 'FAILED'} ({decided}). {detail}"
-                + (f" Source: {result.citation}." if result.citation else "")
-            )
-        lines.append("")
-
-    return "\n".join(lines)
-
-
-async def answer_run(run: Run, message: str) -> AsyncIterator[ev.Event]:
-    """Answer a typed question about a run that has already been checked.
-
-    Read-only in the strongest sense: this touches neither SAP nor the run state.
-    A question is a question, and answering one must never be able to re-trigger
-    validation or move the state machine.
-    """
-    if not run.invoices:
-        yield ev.Text(
-            delta="There is no batch to discuss yet. Upload some invoices and I will check them."
-        )
-        return
-
-    language = "German" if run.locale == "de" else "English"
-    parts = [f"Run record:\n\n{_run_record(run)}"]
-
-    if run.conversation:
-        # Only the recent turns. The run record is the source of truth and is sent
-        # in full every time; older chat adds tokens without adding facts, and a
-        # long tail of it starts competing with the record for the model's
-        # attention.
-        history = "\n\n".join(
-            f"Question: {question}\nYour answer: {answer}"
-            for question, answer in run.conversation[-HISTORY_TURNS:]
-        )
-        parts.append(f"Earlier in this conversation:\n\n{history}")
-
-    parts.append(f"Question: {message}\n\nAnswer in {language}.")
-    prompt = "\n\n".join(parts)
-
-    from .bedrock import stream_text
+    # Only the recent turns. The tools are the source of truth and are available
+    # every turn; older chat adds tokens without adding facts.
+    history = run.conversation[-HISTORY_TURNS:] if run else None
 
     spoken: list[str] = []
     try:
-        async for delta in stream_text(ANSWER_SYSTEM, prompt):
+        async for delta in answer(message, locale, history):
             spoken.append(delta)
             yield ev.Text(delta=delta)
     except Exception as error:  # noqa: BLE001 - a failed answer must not fail the run
+        log.exception("answering failed")
         yield ev.Text(delta=f"I could not answer that: {error}")
         return
 
-    # Only a complete answer is remembered. Recording a half-streamed one would
-    # teach the next turn to refer back to something the user never finished
-    # reading.
-    run.conversation.append((message, "".join(spoken)))
-    log.info("%s answered in %d turns of history", run.run_id, len(run.conversation))
+    if run is not None:
+        # Only a complete answer is remembered. Recording a half-streamed one
+        # would teach the next turn to refer back to something the user never
+        # finished reading.
+        run.conversation.append((message, "".join(spoken)))
+        log.info("%s answered in %d turns of history", run.run_id, len(run.conversation))

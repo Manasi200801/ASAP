@@ -21,7 +21,11 @@ export async function POST(request: Request) {
     // worse, because the fallback is what a stranger opening the public URL
     // sees.
     const message: string | undefined = body.message;
-    return eventStream(message && !body.sample ? mockAnswer(message) : mockRun(runId));
+    // "none" is what the client sends when no batch has run. The mock says so
+    // rather than answering about a table the user cannot see.
+    return eventStream(
+      message && !body.sample ? mockAnswer(message, runId !== "none") : mockRun(runId),
+    );
   }
 
   const upstream = await fetch(`${endpoint}/chat`, {

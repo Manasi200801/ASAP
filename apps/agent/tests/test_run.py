@@ -7,10 +7,18 @@ Or bare:   python apps/agent/tests/test_run.py
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+# A scratch database, before anything imports the app. Tests write real runs, and
+# they must not land in the file the demo answers questions from.
+_TEST_DB = Path(tempfile.gettempdir()) / "strike-ap-test.db"
+_TEST_DB.unlink(missing_ok=True)
+os.environ["AP_DB_PATH"] = str(_TEST_DB)
 
 from app import events as ev  # noqa: E402
 from app.extract import sample_batch  # noqa: E402
@@ -139,6 +147,61 @@ def test_distinct_invoices_from_one_supplier_are_not_duplicates() -> None:
     batch = sample_batch()
     mark_duplicates(batch)
     assert all(i.duplicate_of is None for i in batch), "distinct invoices must not be flagged"
+
+
+def test_the_agent_can_query_what_a_run_wrote() -> None:
+    """The chat answers from the database, through exactly these three tools.
+
+    Nothing about the batch is put in the prompt, so if these queries are wrong
+    the assistant is not wrong in an interesting way - it is blind.
+    """
+    from decimal import Decimal
+
+    from app.ask import dispatch
+
+    store, sap, judge = RunStore(), FakeSap(), FakeJudge()
+    run = store.create("r_tools", "516359819848", "en")
+    asyncio.run(collect(validate_run(run, [], sap, judge)))
+
+    detail = dispatch("invoice_detail", {"invoice": "FPL-9999"})
+    assert detail["verdict"] == "blocked", detail
+    assert detail["headline"], "the reason a person reads must survive to the database"
+    assert any(not check["passed"] for check in detail["checks"]), "the failing check must be there"
+    assert any(check["decided_by"] == "agent" for check in detail["checks"]), "provenance too"
+
+    missing = dispatch("invoice_detail", {"invoice": "FPL-0000"})
+    assert missing.get("found") is False, "an unknown invoice is answerable, not an error"
+
+    supplier = dispatch("search_invoices", {"query": "17401710"})
+    assert supplier["count"] >= 4, supplier["count"]
+
+    blocked = dispatch("search_invoices", {"status": "blocked"})
+    assert [row["invoice_id"] for row in blocked["invoices"]] == ["FPL-9999"]
+
+    # The arithmetic the model got wrong on its own: 454.00 for a batch of 513.50.
+    totals = dispatch("batch_totals", {"status": "ready"})
+    expected = sum(Decimal(i.gross_amount) for i in run.invoices if i.invoice_id in run.ready)
+    assert Decimal(totals["gross_total"]) == expected, totals
+    assert totals["ready"] == 5 and totals["blocked"] == 0, totals
+
+
+def test_a_question_survives_the_process_that_ran_the_batch() -> None:
+    """The store is in memory; the answers are not.
+
+    A reload used to be answered with "I no longer have that batch", which is a
+    demo ending itself.
+    """
+    from app.ask import dispatch
+
+    store, sap, judge = RunStore(), FakeSap(), FakeJudge()
+    run = store.create("r_gone", "516359819848", "en")
+    asyncio.run(collect(validate_run(run, [], sap, judge)))
+
+    restarted = RunStore()  # everything the old process held is gone
+    assert restarted.get("r_gone") is None
+
+    detail = dispatch("invoice_detail", {"invoice": "FPL-9999", "run": "r_gone"})
+    assert detail and detail["verdict"] == "blocked"
 
 
 if __name__ == "__main__":

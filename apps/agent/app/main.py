@@ -65,6 +65,7 @@ def _repair_ca_bundle() -> None:
 
 _repair_ca_bundle()
 
+from . import db  # noqa: E402
 from . import events as ev  # noqa: E402
 from .judge import build_judge  # noqa: E402
 from .orchestrator import RunStore, answer_run, post_run, validate_run  # noqa: E402
@@ -87,7 +88,9 @@ store = RunStore()
 sap = build_sap()
 judge = build_judge()
 
-log.info("backends: sap=%s judge=%s", type(sap).__name__, type(judge).__name__)
+db.init()
+
+log.info("backends: sap=%s judge=%s, db=%s", type(sap).__name__, type(judge).__name__, db.path())
 
 
 async def sse(events: AsyncIterator[ev.Event]) -> AsyncIterator[bytes]:
@@ -133,25 +136,12 @@ async def chat(request: ChatRequest) -> StreamingResponse:
     """
     existing = store.get(request.runId)
     if request.message and not request.sample:
-        if existing is not None and existing.invoices:
-            log.info("chat %s answering: %r", request.runId, request.message[:80])
-            return stream(answer_run(existing, request.message))
-
-        # A question about a run this process no longer holds - the store is in
-        # memory, so a restart loses it. Say that, rather than falling through
-        # and starting a run, which is what made asking a question re-check six
-        # invoices in the first place.
-        log.info("chat %s asked about a run it does not have", request.runId)
-
-        async def forgotten() -> AsyncIterator[ev.Event]:
-            yield ev.Text(
-                delta=(
-                    "I no longer have that batch - the agent restarted since it ran. "
-                    "Upload the documents again and I can answer from the new run."
-                )
-            )
-
-        return stream(forgotten())
+        # Always an answer, never a run. The agent's tools read the database, so
+        # it can answer about a batch this process never held - and when there is
+        # genuinely nothing there, it says so itself rather than falling through
+        # and re-checking six invoices to answer a question about one.
+        log.info("chat %s answering: %r", request.runId, request.message[:80])
+        return stream(answer_run(existing, request.message, request.locale))
 
     log.info(
         "chat %s starting run: %d files, locale=%s, sap=%s, judge=%s",

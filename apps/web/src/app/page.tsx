@@ -8,7 +8,7 @@ import { MAX_FILES } from "@/lib/events";
 import { useLocale } from "@/lib/i18n";
 import type { Duplicate } from "@/lib/use-run";
 import { useRun } from "@/lib/use-run";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export default function Page() {
   const { locale, setLocale, t } = useLocale();
@@ -17,16 +17,14 @@ export default function Page() {
   const [slow, setSlow] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [repeats, setRepeats] = useState<Duplicate[]>([]);
-  // A question typed before any batch exists. Held until there is something
-  // to answer it from.
-  const [pending, setPending] = useState<string | null>(null);
+  const transcript = useRef<HTMLDivElement>(null);
 
   const busy =
     uploading ||
     run.state === "extracting" ||
     run.state === "validating" ||
     run.state === "posting";
-  const started = run.state !== "idle" || uploading;
+  const started = run.state !== "idle" || uploading || run.messages.length > 0;
 
   // Counted from the rows as they settle, not from the closing `summary` event.
   // Reading the summary alone leaves the header on 0/0/0 for the whole run, which
@@ -46,26 +44,25 @@ export default function Page() {
     document.documentElement.style.setProperty("--m", next ? "4" : "1");
   }
 
-  async function begin(message?: string) {
+  async function begin() {
     reset();
     setFiles([]);
     setRepeats([]);
-    // Asking before a batch exists used to load the batch and throw the
-    // question away. Keep it, and put it once the run has something to answer
-    // from - the question is why they clicked in the first place.
-    setPending(message ?? null);
     // No documents means the demo batch, and it says so rather than relying on
     // the agent to guess from an empty key list.
     await start(locale, undefined, { sample: true });
   }
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `ask` is stable per run
+  // Follow the newest content, but only while the reader is already at the
+  // bottom. Yanking someone back down while they are reading an earlier answer
+  // is worse than not following at all.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the run object is the signal
   useEffect(() => {
-    if (!pending || run.state !== "awaiting-approval" || run.answering) return;
-    const question = pending;
-    setPending(null);
-    void ask(locale, question);
-  }, [pending, run.state, run.answering, locale]);
+    const box = transcript.current;
+    if (!box) return;
+    const distance = box.scrollHeight - box.scrollTop - box.clientHeight;
+    if (distance < 140) box.scrollTop = box.scrollHeight;
+  }, [run]);
 
   async function onFiles(dropped: File[]) {
     if (dropped.length === 0) return;
@@ -145,7 +142,13 @@ export default function Page() {
         </header>
 
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_270px]">
-          <div className="flex min-h-[460px] min-w-0 flex-col gap-4 px-4 pt-5 pb-2">
+          {/* The transcript scrolls, the shell does not. A long conversation used
+              to push the composer off the bottom of the window, so the input you
+              needed was the one thing you had to scroll away from. */}
+          <div
+            ref={transcript}
+            className="flex max-h-[64vh] min-h-[460px] min-w-0 flex-col gap-4 overflow-y-auto overscroll-contain px-4 pt-5 pb-2"
+          >
             {files.length > 0 ? (
               <div className="flex flex-col gap-2.5">
                 <div className="font-data text-[10.5px] text-ink-faint uppercase tracking-[0.14em]">
@@ -190,7 +193,11 @@ export default function Page() {
                     index === 0 || run.messages[index - 1].role !== message.role;
                   return (
                     <div
-                      key={`${index}-${message.role}-${message.text.slice(0, 12)}`}
+                      // Index alone. Keying on the text remounts the paragraph on
+                      // every delta of a streaming answer, which restarts the
+                      // enter animation once per token.
+                      // biome-ignore lint/suspicious/noArrayIndexKey: messages are only ever appended
+                      key={index}
                       className="flex flex-col gap-2.5"
                     >
                       {speakerChanged ? (
@@ -202,7 +209,11 @@ export default function Page() {
                           {t(message.role)}
                         </div>
                       ) : null}
-                      <p className="enter max-w-[66ch]">{message.text}</p>
+                      <p className="enter max-w-[66ch] whitespace-pre-wrap">
+                        {/* An answer that has not produced a token yet still gets
+                            a bubble, so the question never looks unheard. */}
+                        {message.text || (message.streaming ? "…" : "")}
+                      </p>
                     </div>
                   );
                 })}
@@ -238,11 +249,12 @@ export default function Page() {
         </div>
 
         <Composer
-          // Once a batch exists, typing asks about it. Only the first message
-          // starts a run - otherwise a question wipes the table it is asking
-          // about and re-checks every invoice against SAP to answer nothing.
-          // An empty submit still means "run this batch", even after a run exists.
-          onSubmit={(message) => (run.runId && message ? ask(locale, message) : begin(message))}
+          // A message is always a question, a submit with no message is always a
+          // batch. Nothing typed or clicked in the chat can start a run any more:
+          // asking "why was FPL-9999 blocked?" used to load and re-check six
+          // invoices before answering, which is the opposite of what was asked.
+          onSubmit={(message) => (message ? ask(locale, message) : begin())}
+          hasRun={Boolean(run.runId)}
           onFiles={onFiles}
           disabled={busy || run.answering}
           uploading={uploading}

@@ -61,6 +61,8 @@ app/
   orchestrator.py   the state machine, event pacing, the park payload
   rules.py          the 13 deterministic checks
   judge.py          the 3 that need judgment, plus explanations
+  ask.py            the chat brain: three tools over the database
+  db.py             SQLite: every invoice read, every check run
   sap.py            SAP access behind one Protocol      ← the integration seam
   extract.py        invoice reading                     ← the other seam
   events.py         Pydantic mirror of the contract
@@ -104,14 +106,44 @@ python scripts/make_kb.py sops       # rebuilds it end to end, about 90 seconds
 
 Same endpoint, two behaviours, and the distinction matters:
 
-- **no message, or no run yet** — starts a run: extract, validate, stop at
-  `awaiting-approval`
-- **a message about a run that already exists** — answers the question from the
-  stored result, streaming the reply token by token
+- **no message** — starts a run: extract, validate, stop at `awaiting-approval`
+- **a message** — always a question, never a run. Answering touches neither SAP
+  nor the state machine, so asking about an invoice can never re-check the batch.
 
-Answering touches neither SAP nor the state machine. Totals in answers are
-computed in Python and handed to the model as facts, because a model asked to add
-up invoices will do it and get it wrong.
+## How the chat answers
+
+Nothing about the batch is written into the prompt. The model gets a job
+description and three tools over `db.py`, and fetches what it needs:
+
+| Tool | Answers |
+|---|---|
+| `search_invoices` | "which ones are blocked?", "anything from 17401710?" |
+| `invoice_detail` | "why was FPL-9999 blocked?" — every check, with reasoning and citation |
+| `batch_totals` | "what's ready to approve?" — summed in Python, never by the model |
+
+That is what makes it an assistant rather than a template. A greeting needs no
+rule in the prompt: there is nothing to look up, so nothing is looked up. A
+question about a batch from an hour ago works the same as one about the batch on
+screen, because both are rows in the same table.
+
+Totals are `Decimal` arithmetic in `db.totals`. A model asked to add up invoices
+will do it and get it wrong — an early version answered 454.00 for a batch of
+513.50.
+
+## The database
+
+SQLite, standard library, one file at `apps/agent/data/ap.db` (`AP_DB_PATH` moves
+it). Every run writes its invoices and every check that ran against them, once
+when validation settles and again after posting.
+
+It exists because the store used to be in memory: a question after a restart was
+answered with "I no longer have that batch", which is a demo ending itself. It is
+also the swap point — DynamoDB later means reimplementing `save_run`,
+`search_invoices`, `invoice_detail` and `totals`, and nothing else.
+
+```bash
+sqlite3 data/ap.db "select supplier_invoice_id, verdict, headline from invoices"
+```
 
 ## Three traps
 

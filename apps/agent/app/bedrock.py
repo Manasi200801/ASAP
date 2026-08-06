@@ -107,6 +107,139 @@ async def stream_text(system: str, prompt: str) -> AsyncIterator[str]:
         yield item
 
 
+async def stream_tools(
+    system: str,
+    messages: list[dict],
+    tools: list[dict],
+    dispatch,
+    max_turns: int = 5,
+) -> AsyncIterator[str]:
+    """Converse with tools, streamed, until the model stops asking for data.
+
+    The model decides what it needs and fetches it. That is the difference
+    between an assistant and a template: nothing about the current batch is
+    written into the prompt, so a question about an invoice from an hour ago is
+    answered the same way as one about the batch on screen.
+
+    `dispatch(name, arguments) -> dict` is called on the worker thread, so it
+    must be an ordinary blocking function. `max_turns` is a stop, not a target:
+    a model that keeps calling tools without answering would otherwise loop.
+    """
+    import asyncio
+    import threading
+
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue[str | Exception | None] = asyncio.Queue()
+    emit = lambda text: loop.call_soon_threadsafe(queue.put_nowait, text)  # noqa: E731
+
+    def pump() -> None:
+        try:
+            client = _client()
+            for turn in range(max_turns):
+                started = time.perf_counter()
+                response = client.converse_stream(
+                    modelId=model_id(),
+                    system=[{"text": system}],
+                    messages=messages,
+                    toolConfig={"tools": tools},
+                    inferenceConfig={"maxTokens": 1200, "temperature": 0},
+                )
+
+                spoken: list[str] = []
+                # Keyed by content block index: a tool call's arguments arrive as
+                # a stream of partial JSON that has to be reassembled per block.
+                calls: dict[int, dict] = {}
+                stop_reason = None
+
+                for event in response["stream"]:
+                    if "contentBlockStart" in event:
+                        block = event["contentBlockStart"]
+                        start = block.get("start", {})
+                        if "toolUse" in start:
+                            calls[block["contentBlockIndex"]] = {
+                                "toolUseId": start["toolUse"]["toolUseId"],
+                                "name": start["toolUse"]["name"],
+                                "input": "",
+                            }
+                    elif "contentBlockDelta" in event:
+                        block = event["contentBlockDelta"]
+                        delta = block.get("delta", {})
+                        if "text" in delta:
+                            spoken.append(delta["text"])
+                            emit(delta["text"])
+                        elif "toolUse" in delta:
+                            call = calls.get(block["contentBlockIndex"])
+                            if call is not None:
+                                call["input"] += delta["toolUse"].get("input", "")
+                    elif "messageStop" in event:
+                        stop_reason = event["messageStop"].get("stopReason")
+
+                log.info(
+                    "converse turn %d -> %.0fms, stop=%s, %d tool call(s)",
+                    turn,
+                    (time.perf_counter() - started) * 1000,
+                    stop_reason,
+                    len(calls),
+                )
+
+                if stop_reason != "tool_use" or not calls:
+                    return
+
+                # Rebuild the assistant turn, run what it asked for, and hand the
+                # results back as the next user turn. This is the whole protocol.
+                assistant: list[dict] = []
+                text = "".join(spoken)
+                if text.strip():  # Bedrock rejects an empty text block
+                    assistant.append({"text": text})
+                results: list[dict] = []
+
+                for call in calls.values():
+                    try:
+                        arguments = json.loads(call["input"] or "{}")
+                    except json.JSONDecodeError:
+                        arguments = {}
+                    log.info("tool %s(%s)", call["name"], arguments)
+                    try:
+                        output = dispatch(call["name"], arguments)
+                    except Exception as error:  # noqa: BLE001 - the model is told and can recover
+                        log.warning("tool %s failed: %s", call["name"], error)
+                        output = {"error": str(error)}
+
+                    assistant.append(
+                        {
+                            "toolUse": {
+                                "toolUseId": call["toolUseId"],
+                                "name": call["name"],
+                                "input": arguments,
+                            }
+                        }
+                    )
+                    results.append(
+                        {
+                            "toolResult": {
+                                "toolUseId": call["toolUseId"],
+                                "content": [{"json": output}],
+                            }
+                        }
+                    )
+
+                messages.append({"role": "assistant", "content": assistant})
+                messages.append({"role": "user", "content": results})
+
+            log.warning("tool loop hit %d turns without a final answer", max_turns)
+        except Exception as error:  # noqa: BLE001 - re-raised on the consumer side
+            loop.call_soon_threadsafe(queue.put_nowait, error)
+        finally:
+            loop.call_soon_threadsafe(queue.put_nowait, None)
+
+    threading.Thread(target=pump, daemon=True).start()
+
+    while (item := await queue.get()) is not None:
+        if isinstance(item, Exception):
+            raise item
+        yield item
+
+
 def ask_json(system: str, prompt: str, document: bytes | None = None, name: str = "invoice") -> dict:
     """One Converse call that must come back as a JSON object."""
     client = _client()
