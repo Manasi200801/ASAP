@@ -219,6 +219,11 @@ class McpSap:
             raise SapError(f"SAP is not responding ({response.status_code}).")
 
         log.info("%s %s -> ok in %.0fms", method, entity, ms)
+        if method == "POST":
+            # Temporary: writes are the ones intermittently coming back without a
+            # document number, and the fallback error message throws away exactly
+            # the payload that would explain why. Remove once that's root-caused.
+            log.info("%s %s raw response: %s", method, entity, response.text[:4000])
         return self._unwrap(response.text)
 
     @staticmethod

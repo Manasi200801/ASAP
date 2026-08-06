@@ -32,7 +32,7 @@ export async function POST(request: Request) {
       "Content-Type": "application/json",
       ...(process.env.AGENT_TOKEN ? { Authorization: `Bearer ${process.env.AGENT_TOKEN}` } : {}),
     },
-    body: JSON.stringify({ runId }),
+    body: JSON.stringify({ runId, readyIds }),
   });
 
   if (!upstream.ok || !upstream.body) {

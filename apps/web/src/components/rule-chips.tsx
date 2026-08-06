@@ -1,56 +1,64 @@
 import type { RuleEvent } from "@/lib/events";
 import type { Translate } from "@/lib/i18n";
-
-const TONE: Record<RuleEvent["status"], string> = {
-  pass: "opacity-100",
-  fail: "border-blocked-deep bg-blocked/10 text-blocked opacity-100",
-  skip: "opacity-40",
-};
+import { Spinner } from "./spinner";
 
 /**
- * Every check shows who decided it.
+ * One line per thing worth reading, nothing else.
  *
- * Twelve of sixteen are arithmetic or lookup and run in Python. The four that
- * need judgment run in the model, carry a marker, and open to their reasoning.
- * Making that boundary visible is what turns a score into something a clerk can
- * interrogate.
+ * Twelve of sixteen checks are arithmetic or lookup - a clerk does not need
+ * sixteen chips to trust that. A judged check earns its own line so the
+ * provenance (the ◆) stays visible, but the label alone is the claim; "supplier
+ * matches" does not need a sentence proving two numbers are equal. Only a
+ * failure earns prose, because that is the one line someone has to act on.
  */
-export function RuleChips({ rules, t }: { rules: RuleEvent[]; t: Translate }) {
-  const withReasoning = rules.filter((r) => r.reasoning);
+export function RuleChips({
+  rules,
+  pending,
+  t,
+}: {
+  rules: RuleEvent[];
+  pending: boolean;
+  t: Translate;
+}) {
+  const automatic = rules.filter((r) => r.status === "pass" && r.decidedBy === "rule");
+  const judged = rules.filter((r) => r.status === "pass" && r.decidedBy === "agent");
+  const failed = rules.filter((r) => r.status === "fail");
+
+  if (rules.length === 0 && !pending) return null;
 
   return (
-    <div className="pt-0.5 pr-3 pb-3.5 pl-3">
-      <div className="flex flex-wrap gap-[5px]">
-        {rules.map((rule) => {
-          const agent = rule.decidedBy === "agent";
-          const passTone = agent
-            ? "border-agent-deep bg-agent/10 text-agent"
-            : "border-ok-deep bg-ok/[0.07] text-ok";
+    <div className="flex flex-col gap-2.5 pt-0.5 pr-3 pb-3.5 pl-3">
+      {automatic.length > 0 ? (
+        <div className="flex items-center gap-2 text-[15px] text-success">
+          <span className="flex h-4 w-4 flex-none items-center justify-center rounded-full bg-success/15 text-[10px]">
+            ✓
+          </span>
+          {t("autoChecksPassed", { count: automatic.length })}
+        </div>
+      ) : null}
 
-          return (
-            <span
-              key={rule.ruleId}
-              title={rule.detail ?? (agent ? t("decidedByAgent") : undefined)}
-              className={`tick inline-flex items-center gap-[5px] rounded border border-line bg-surface-2 px-2 py-[3px] font-data text-[10.5px] text-ink-faint ${
-                rule.status === "pass" ? passTone : TONE[rule.status]
-              }`}
-            >
-              {agent ? <span className="flex-none text-[8px] text-agent">◆</span> : null}
-              {rule.label}
-            </span>
-          );
-        })}
-      </div>
-
-      {withReasoning.map((rule) => (
-        <div
-          key={`why-${rule.ruleId}`}
-          className="mt-2.5 max-w-[66ch] border-agent-deep border-l-2 pl-2.5 text-[12.5px] text-ink-dim"
-        >
-          <b className="font-medium text-agent">◆ {rule.label}</b> — {rule.reasoning}
-          {rule.citation ? <span className="text-ink-faint"> ({rule.citation})</span> : null}
+      {judged.map((rule) => (
+        <div key={rule.ruleId} className="flex items-center gap-2 text-[15px] text-secondary">
+          <span className="flex-none text-[9px]">◆</span>
+          <span className="font-medium">{rule.label}</span>
         </div>
       ))}
+
+      {failed.map((rule) => (
+        <div key={rule.ruleId} className="flex items-baseline gap-2 text-[15px] text-error">
+          <span className="flex-none text-[9px]">✕</span>
+          <p>
+            <b className="font-medium">{rule.label}</b> — {rule.detail ?? t("stBlocked")}
+          </p>
+        </div>
+      ))}
+
+      {pending ? (
+        <div className="flex items-center gap-2 text-[15px] text-on-surface-faint">
+          <Spinner />
+          {t("stPending")}…
+        </div>
+      ) : null}
     </div>
   );
 }
