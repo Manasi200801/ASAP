@@ -313,6 +313,12 @@ async def validate_run(
         po, gr, results, alternatives = await prepared[inv.invoice_id]
         run.results[inv.invoice_id] = [results[rule_id] for rule_id in sorted(results)]
 
+        # Kept for the park payload. Under GR-based invoice verification SAP
+        # rejects an item that does not point back at the receipt it settles, and
+        # this is the only moment the receipt is in hand.
+        if gr is not None:
+            inv.gr_document, inv.gr_year, inv.gr_item = gr.document, gr.year, gr.item
+
         failures: list[RuleResult] = []
         stopped = False
 
@@ -429,6 +435,22 @@ def odata_date(day: str) -> str:
 def park_payload(inv: Extracted, index: int, run: Run) -> dict:
     """The deep insert Lab 06 specifies. Status A parks; it never posts for payment."""
     posting = odata_date(inv.posting_date)
+
+    # Where the purchase order settles against goods receipts, SAP requires the
+    # item to name the receipt it is paying for, and rejects the whole document
+    # otherwise: "Fill in mandatory field 'ReferenceDocument, -FiscalYear,
+    # -Item'". Sent only when we actually have a receipt - an invoice with none
+    # must fail on rule 12 rather than on a half-filled payload.
+    receipt = (
+        {
+            "ReferenceDocument": inv.gr_document,
+            "ReferenceDocumentFiscalYear": inv.gr_year,
+            "ReferenceDocumentItem": inv.gr_item,
+        }
+        if inv.gr_document and inv.gr_year and inv.gr_item
+        else {}
+    )
+
     return {
         "CompanyCode": inv.company_code,
         "DocumentDate": posting,
@@ -449,6 +471,7 @@ def park_payload(inv: Extracted, index: int, run: Run) -> dict:
                 "SupplierInvoiceItemAmount": inv.net_amount,
                 "QuantityInPurchaseOrderUnit": inv.quantity,
                 "PurchaseOrderQuantityUnit": inv.unit,
+                **receipt,
             }
         ],
     }

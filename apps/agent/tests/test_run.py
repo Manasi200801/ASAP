@@ -132,8 +132,24 @@ def test_park_payload_parks_and_never_posts() -> None:
     inv.reference = run.reference_for(0)
     inv.posting_date = POSTING_DATE
 
+    inv.gr_document, inv.gr_year, inv.gr_item = "5000002033", "2025", "1"
+
     payload = park_payload(inv, 0, run)
     assert payload["SupplierInvoiceStatus"] == "A", "status A parks; anything else posts for payment"
+
+    # SAP rejects the whole document without these wherever the order settles
+    # against goods receipts: "Fill in mandatory field 'ReferenceDocument,
+    # -FiscalYear, -Item'". Four of five invoices failed to park on exactly this.
+    line = payload["to_SuplrInvcItemPurOrdRef"][0]
+    assert line["ReferenceDocument"] == "5000002033", line
+    assert line["ReferenceDocumentFiscalYear"] == "2025", line
+    assert line["ReferenceDocumentItem"] == "1", line
+
+    # With no receipt in hand the fields are omitted rather than sent empty - an
+    # invoice with no goods receipt has to fail its own check, not the payload.
+    bare = sample_batch()[0]
+    bare.reference, bare.posting_date = run.reference_for(1), POSTING_DATE
+    assert "ReferenceDocument" not in park_payload(bare, 1, run)["to_SuplrInvcItemPurOrdRef"][0]
     # OData V2 epoch-millisecond form for 2025-03-15, the only open posting
     # period on the workshop system. A plain date string fails at write time.
     assert payload["PostingDate"] == "/Date(1741996800000)/", payload["PostingDate"]
