@@ -9,7 +9,7 @@ import { useState } from "react";
 
 export default function Page() {
   const { locale, setLocale, t } = useLocale();
-  const { run, start, approve, reset } = useRun();
+  const { run, start, ask, approve, reset } = useRun();
   const [files, setFiles] = useState<string[]>([]);
 
   const busy = run.state === "extracting" || run.state === "validating" || run.state === "posting";
@@ -111,18 +111,30 @@ export default function Page() {
 
           {started ? (
             <div className="flex flex-col gap-2.5">
-              <div className="font-semibold text-[12px] text-secondary uppercase tracking-[0.12em]">
-                {t("agent")}
-              </div>
-
-              {run.messages.map((message, index) => (
-                <p
-                  key={`${index}-${message.slice(0, 12)}`}
-                  className="enter max-w-[78ch] text-[17px] text-on-surface leading-7"
-                >
-                  {message}
-                </p>
-              ))}
+              {run.messages.map((message, index) => {
+                // Label only when the speaker changes. Repeating "AGENT" above
+                // every sentence of a run turns a transcript into a stutter.
+                const speakerChanged = index === 0 || run.messages[index - 1].role !== message.role;
+                return (
+                  <div
+                    key={`${index}-${message.role}-${message.text.slice(0, 12)}`}
+                    className="flex flex-col gap-2.5"
+                  >
+                    {speakerChanged ? (
+                      <div
+                        className={`font-semibold text-[12px] uppercase tracking-[0.12em] ${
+                          message.role === "agent" ? "text-secondary" : "text-on-surface-faint"
+                        }`}
+                      >
+                        {t(message.role)}
+                      </div>
+                    ) : null}
+                    <p className="enter max-w-[78ch] text-[17px] text-on-surface leading-7">
+                      {message.text}
+                    </p>
+                  </div>
+                );
+              })}
 
               {run.invoices.length > 0 ? <BatchTable invoices={run.invoices} t={t} /> : null}
 
@@ -142,7 +154,16 @@ export default function Page() {
           ) : null}
         </div>
 
-        <Composer onSubmit={(message) => begin(message)} onFiles={onFiles} disabled={busy} t={t} />
+        <Composer
+          // Once a batch exists, typing asks about it. Only the first message
+          // starts a run - otherwise a question wipes the table it is asking
+          // about and re-checks every invoice against SAP to answer nothing.
+          // An empty submit still means "run this batch", even after a run exists.
+          onSubmit={(message) => (run.runId && message ? ask(locale, message) : begin(message))}
+          onFiles={onFiles}
+          disabled={busy || run.answering}
+          t={t}
+        />
       </div>
     </main>
   );

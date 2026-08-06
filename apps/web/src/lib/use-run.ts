@@ -7,17 +7,23 @@ import { readEventStream } from "./sse";
 
 export type Summary = Extract<RunEvent, { type: "summary" }>;
 
+export type Message = { role: "you" | "agent"; text: string };
+
 export type Run = {
   state: RunState;
   runId: string | null;
   reference: string | null;
   invoices: InvoiceRow[];
   calls: ToolCallEvent[];
-  messages: string[];
+  messages: Message[];
   summary: Summary | null;
   readyIds: string[];
   blockedIds: string[];
   error: string | null;
+  // True while an answer is streaming back token by token. The run's own `text`
+  // events are whole sentences and each deserves its own paragraph; an answer
+  // arrives as deltas that have to land in one.
+  answering: boolean;
 };
 
 const EMPTY: Run = {
@@ -31,6 +37,7 @@ const EMPTY: Run = {
   readyIds: [],
   blockedIds: [],
   error: null,
+  answering: false,
 };
 
 function apply(run: Run, event: RunEvent): Run {
@@ -111,8 +118,16 @@ function apply(run: Run, event: RunEvent): Run {
         ),
       };
 
-    case "text":
-      return { ...run, messages: [...run.messages, event.delta] };
+    case "text": {
+      const last = run.messages.at(-1);
+      if (run.answering && last?.role === "agent") {
+        return {
+          ...run,
+          messages: [...run.messages.slice(0, -1), { ...last, text: last.text + event.delta }],
+        };
+      }
+      return { ...run, messages: [...run.messages, { role: "agent", text: event.delta }] };
+    }
 
     case "error":
       return { ...run, state: "failed", error: event.message };
@@ -146,6 +161,34 @@ export function useRun() {
     [consume],
   );
 
+  const ask = useCallback(
+    async (locale: "en" | "de", message: string) => {
+      const current = token.current;
+      const runId = run.runId;
+      if (!runId) return;
+
+      // Keep the run exactly as it is. A question must never clear the table the
+      // question is about, and must never re-trigger validation.
+      setRun((prev) => ({
+        ...prev,
+        answering: true,
+        messages: [...prev.messages, { role: "you", text: message }],
+      }));
+
+      try {
+        const response = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ runId, keys: [], locale, message }),
+        });
+        await consume(response, current);
+      } finally {
+        setRun((prev) => ({ ...prev, answering: false }));
+      }
+    },
+    [run.runId, consume],
+  );
+
   const approve = useCallback(async () => {
     const current = token.current;
     if (!run.runId) return;
@@ -165,5 +208,5 @@ export function useRun() {
     setRun(EMPTY);
   }, []);
 
-  return { run, start, approve, reset };
+  return { run, start, ask, approve, reset };
 }
