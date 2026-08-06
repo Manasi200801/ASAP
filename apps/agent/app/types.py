@@ -39,6 +39,12 @@ class Extracted:
     # row is assigned its own fresh reference, so both would post cleanly.
     duplicate_of: str | None = None
 
+    # The SAP document this supplier invoice was already parked as, on an earlier
+    # run. The same document arriving a second time next week is the duplicate
+    # that costs real money, and our own reference cannot see it - that is minted
+    # fresh every run, so it only ever collides with itself.
+    already_parked: str | None = None
+
     confidence: dict[str, float] = field(default_factory=dict)
 
 

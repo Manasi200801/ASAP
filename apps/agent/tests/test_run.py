@@ -7,6 +7,7 @@ Or bare:   python apps/agent/tests/test_run.py
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import sys
 import tempfile
@@ -30,6 +31,24 @@ from app.sap import FakeSap  # noqa: E402
 
 async def collect(gen) -> list[ev.Event]:
     return [event async for event in gen]
+
+
+@contextlib.contextmanager
+def its_own_database():
+    """For a test that parks documents.
+
+    Parking is remembered forever, on purpose - so a test that parks the sample
+    batch makes every later run of it a real duplicate. That is the behaviour
+    working; it just cannot share a file with the tests that expect a clean slate.
+    """
+    previous = os.environ["AP_DB_PATH"]
+    scratch = Path(tempfile.gettempdir()) / "strike-ap-parked.db"
+    scratch.unlink(missing_ok=True)
+    os.environ["AP_DB_PATH"] = str(scratch)
+    try:
+        yield
+    finally:
+        os.environ["AP_DB_PATH"] = previous
 
 
 def test_every_rule_id_is_covered_exactly_once() -> None:
@@ -244,6 +263,40 @@ def test_a_half_finished_turn_cannot_break_the_next_question() -> None:
     # rejects just as firmly.
     opening = conversation([{"role": "assistant", "text": "...continued"}], "hi")
     assert [message["role"] for message in opening] == ["user"]
+
+
+def test_an_invoice_parked_last_week_cannot_be_parked_again() -> None:
+    """The duplicate that costs real money, and the one nothing else catches.
+
+    Rule 16's SAP lookup asks whether OUR reference exists, and that is minted
+    fresh every run so rehearsals do not collide - so it can only ever catch the
+    sequence colliding with itself. The same supplier invoice arriving next week,
+    under a new file name, sailed through all sixteen checks and paid twice.
+    """
+    with its_own_database():
+        sap, judge = FakeSap(), FakeJudge()
+        store = RunStore()
+
+        first = store.create("r_week1", "516359819848", "en")
+        asyncio.run(collect(validate_run(first, [], sap, judge, sample=True)))
+        asyncio.run(collect(post_run(first, sap)))
+        assert first.sap_documents, "the first run must actually park something"
+
+        # Same invoices, a new run, fresh references - which is exactly what used
+        # to make this sail through all sixteen checks.
+        second = store.create("r_week2", "516359819848", "en")
+        events = asyncio.run(collect(validate_run(second, [], sap, judge, sample=True)))
+
+        approval = next(e for e in events if isinstance(e, ev.Approval))
+        parked = list(first.sap_documents)
+        assert all(i in approval.blockedIds for i in parked), approval.blockedIds
+        assert not any(i in approval.readyIds for i in parked), "nothing parked may park again"
+
+        repeat = next(
+            e for e in events if isinstance(e, ev.Rule) and e.ruleId == 16 and e.status == "fail"
+        )
+        document = first.sap_documents[repeat.invoiceId]
+        assert document in (repeat.detail or ""), "the reason must name the document it repeats"
 
 
 def test_the_reference_tool_says_nothing_rather_than_guessing() -> None:

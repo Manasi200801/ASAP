@@ -205,6 +205,32 @@ def save_run(run: Any) -> None:
     log.info("%s saved: %d invoices", run.run_id, len(run.invoices))
 
 
+def parked_before(vendor: str, supplier_invoice_id: str, run_id: str) -> dict | None:
+    """A document from this supplier, with this invoice number, already parked in SAP.
+
+    The duplicate that matters most and the one nothing else catches. Rule 16's
+    SAP lookup asks whether OUR reference exists, and our reference is minted
+    fresh every run so that rehearsals do not collide - which means it can only
+    ever catch the sequence colliding with itself. The supplier's own invoice
+    number is what identifies their document, and this is the only place it is
+    remembered across runs.
+
+    Scoped to invoices that actually reached SAP: one that was merely checked and
+    left unapproved is not a duplicate of anything.
+    """
+    if not supplier_invoice_id:
+        return None
+    with closing(connect()) as connection:
+        row = connection.execute(
+            "SELECT invoice_id, run_id, sap_document, file, created_at FROM invoices "
+            "WHERE vendor = ? AND supplier_invoice_id = ? AND run_id != ? "
+            "AND sap_document IS NOT NULL AND sap_document != '' "
+            "ORDER BY created_at DESC LIMIT 1",
+            (vendor, supplier_invoice_id, run_id),
+        ).fetchone()
+    return dict(row) if row else None
+
+
 def add_message(session_id: str, role: str, text: str, run_id: str | None = None) -> None:
     """Record one turn of conversation.
 

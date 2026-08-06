@@ -240,6 +240,19 @@ async def validate_run(
     for index, inv in enumerate(run.invoices):
         inv.reference = run.reference_for(index)
         inv.posting_date = POSTING_DATE
+        # A local read, so it costs nothing worth scheduling around: has this
+        # supplier's invoice number already been parked on an earlier run?
+        earlier = db.parked_before(inv.vendor, inv.supplier_invoice_id, run.run_id)
+        inv.already_parked = earlier["sap_document"] if earlier else None
+        if earlier:
+            log.info(
+                "%s %s was parked before as SAP document %s (run %s, file %s)",
+                run.run_id,
+                inv.invoice_id,
+                earlier["sap_document"],
+                earlier["run_id"],
+                earlier["file"],
+            )
 
     # Started before the invoice rows are even announced. Those rows take a
     # second of deliberate pacing to appear, and that second is free network
