@@ -6,8 +6,12 @@ This file is the source of truth — `CLAUDE.md` just points here so Claude Code
 ## Project
 
 - DMI Hackathon 2026, Seeburg Kreuzlingen. Kickoff and final presentation: 6-7 Aug 2026.
-- Challenge: Topic 3, provided by AWS. Brief: `hackathon-seeburg-2026/challenges/topic-3-aws.md` in
-  the guide repo.
+- Challenge: Topic 3, provided by AWS — **Autonomous SAP Accounts Payable**. Full brief:
+  `hackathon-seeburg-2026/challenges/topic-3-aws.md` in the guide repo.
+  - Build an AI-powered invoice processing agent: business users upload supplier invoices, agent
+    validates them against live SAP S/4HANA data, posts approved invoices automatically.
+  - Must support: batch processing, business-rule validation, clear exception reporting, and a
+    single human approval step before anything is posted.
 - Repo naming, `hackmaster-dmi` read-only collaborator, and submission rules live in the guide repo's
   `checklists/members.md` — do not duplicate them here, just follow them.
 
