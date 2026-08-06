@@ -26,7 +26,7 @@ from .extract import extract_batch
 from .judge import Judge
 from .rules import AGENT_RULE_IDS, RULE_COUNT, RuleResult, run_deterministic
 from .sap import Sap, SapError
-from .types import Extracted
+from .types import Extracted, GoodsReceipt, PurchaseOrder
 
 log = logging.getLogger("app.run")
 
@@ -41,6 +41,11 @@ MINUTES_PER_INVOICE_SAVED = 17
 
 # Question-and-answer pairs carried into the next question.
 HISTORY_TURNS = 6
+
+# Invoices whose network work runs at once. A demo batch is six, so six starts
+# them all; the cap exists so a larger batch cannot fire dozens of concurrent
+# Converse calls and start collecting throttling errors.
+PREPARE_CONCURRENCY = 6
 
 State = Literal[
     "uploaded", "extracting", "validating", "awaiting-approval", "posting", "done", "failed"
@@ -123,6 +128,48 @@ def _rule_event(run: Run, inv: Extracted, result: RuleResult) -> ev.Rule:
     )
 
 
+async def _prepare(
+    inv: Extracted, sap: Sap, judge: Judge, gate: asyncio.Semaphore
+) -> tuple[
+    PurchaseOrder | None, GoodsReceipt | None, dict[int, RuleResult], list[PurchaseOrder]
+]:
+    """Everything for one invoice that needs the network, fetched concurrently.
+
+    The semaphore is not politeness: six invoices at three model calls each is
+    eighteen concurrent Converse requests, which is where a workshop account
+    starts returning throttling errors.
+    """
+    async with gate:
+        # Independent of each other, both round trips to SAP.
+        po, inv.existing_reference = await asyncio.gather(
+            sap.purchase_order(inv.purchase_order, inv.purchase_order_item),
+            sap.reference_exists(inv.vendor, inv.reference),
+        )
+        # This one does depend on the order existing, so it waits.
+        gr = await sap.goods_receipt(inv.purchase_order, inv.purchase_order_item) if po else None
+
+        # One call for rules 4, 7 and 9 rather than three. They share the same
+        # facts, and three requests per invoice was the batch's main contention.
+        #
+        # A missing order is knowable now, so the replacement search runs here
+        # too, alongside everything else. Left where it used to be - after the
+        # invoice had already failed - it ran on its own at the end of the batch
+        # and added half a minute to the one row the audience is watching.
+        judged, alternatives = await asyncio.gather(
+            judge.judge_all(inv, po),
+            sap.open_orders_for(inv.vendor, inv.material) if po is None else _none(),
+        )
+        supplier, material, price = judged
+
+    results = {**run_deterministic(inv, po, gr), 4: supplier, 7: material, 9: price}
+    return po, gr, results, alternatives
+
+
+async def _none() -> list[PurchaseOrder]:
+    """A resolved empty result, so the gather above stays one expression."""
+    return []
+
+
 async def validate_run(
     run: Run, keys: list[str], sap: Sap, judge: Judge
 ) -> AsyncIterator[ev.Event]:
@@ -141,11 +188,23 @@ async def validate_run(
         time.perf_counter() - started,
         run.reference_for(0),
     )
-    yield ev.Batch(runId=run.run_id, reference=run.reference_for(0), count=len(run.invoices))
-
     for index, inv in enumerate(run.invoices):
         inv.reference = run.reference_for(index)
         inv.posting_date = POSTING_DATE
+
+    # Started before the invoice rows are even announced. Those rows take a
+    # second of deliberate pacing to appear, and that second is free network
+    # time. References have to be assigned first, because the duplicate check
+    # reads them.
+    gate = asyncio.Semaphore(PREPARE_CONCURRENCY)
+    prepared = {
+        inv.invoice_id: asyncio.create_task(_prepare(inv, sap, judge, gate))
+        for inv in run.invoices
+    }
+
+    yield ev.Batch(runId=run.run_id, reference=run.reference_for(0), count=len(run.invoices))
+
+    for inv in run.invoices:
         yield ev.Invoice(
             invoiceId=inv.invoice_id,
             file=inv.file,
@@ -183,17 +242,7 @@ async def validate_run(
             resource=f"A_PurchaseOrder('{inv.purchase_order}')",
             status="ok",
         )
-        po = await sap.purchase_order(inv.purchase_order, inv.purchase_order_item)
-        gr = await sap.goods_receipt(inv.purchase_order, inv.purchase_order_item) if po else None
-        inv.existing_reference = await sap.reference_exists(inv.vendor, inv.reference)
-
-        deterministic = run_deterministic(inv, po, gr)
-        judged = {
-            4: await judge.supplier_matches(inv, po),
-            7: await judge.material_matches(inv, po),
-            9: await judge.price_within_policy(inv, po),
-        }
-        results = {**deterministic, **judged}
+        po, gr, results, alternatives = await prepared[inv.invoice_id]
         run.results[inv.invoice_id] = [results[rule_id] for rule_id in sorted(results)]
 
         failures: list[RuleResult] = []
@@ -250,7 +299,8 @@ async def validate_run(
                     resource=f"A_PurchaseOrder?$filter=Supplier eq '{inv.vendor}'",
                     status="ok",
                 )
-                alternatives = await sap.open_orders_for(inv.vendor, inv.material)
+                # Already fetched during preparation, alongside this invoice's
+                # other network work.
                 if alternatives:
                     alt = alternatives[0]
                     suggestion = ev.Suggestion(

@@ -341,15 +341,24 @@ class McpSap:
         except SapError:
             return []
 
-        found = []
-        for row in rows:
-            number = row.get("PurchaseOrder")
-            if not number:
-                continue
-            order = await self.purchase_order(number, row.get("PurchaseOrderItem", "10"))
-            if order and order.supplier and vendor.endswith(order.supplier[-4:]):
-                found.append(order)
-        return found
+        # One round trip per candidate, and they were being awaited in turn: five
+        # orders at roughly two seconds each, to produce a single suggestion, on
+        # the one invoice the audience is already looking at. They are
+        # independent lookups, so they go together.
+        candidates = [
+            self.purchase_order(row["PurchaseOrder"], row.get("PurchaseOrderItem", "10"))
+            for row in rows
+            if row.get("PurchaseOrder")
+        ]
+        orders = await asyncio.gather(*candidates, return_exceptions=True)
+
+        return [
+            order
+            for order in orders
+            if isinstance(order, PurchaseOrder)
+            and order.supplier
+            and vendor.endswith(order.supplier[-4:])
+        ]
 
     async def park(self, payload: dict) -> Parked:
         url = f"{self.base_url}/API_SUPPLIERINVOICE_PROCESS_SRV/A_SupplierInvoice"
