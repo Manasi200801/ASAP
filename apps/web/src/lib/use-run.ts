@@ -314,7 +314,19 @@ export function useRun() {
           headers: { "Content-Type": file.type || "application/octet-stream" },
           body: file,
         });
-        if (!put.ok) throw new Error(`${file.name} could not be uploaded.`);
+        if (!put.ok) {
+          // S3 says why, in an XML body, and throwing it away turns a fifteen
+          // second fix into a debugging session: an expired workshop token
+          // presigns perfectly well and is only refused here, which reads as a
+          // broken upload rather than as credentials to renew.
+          const detail = await put.text().catch(() => "");
+          const code = /<Code>([^<]+)<\/Code>/.exec(detail)?.[1];
+          const said = /<Message>([^<]+)<\/Message>/.exec(detail)?.[1];
+          throw new Error(
+            `${file.name} could not be uploaded (${put.status}${code ? ` ${code}` : ""})` +
+              (said ? `: ${said}` : "."),
+          );
+        }
       }),
     );
 
