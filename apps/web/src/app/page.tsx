@@ -3,8 +3,10 @@
 import { ApprovalCard } from "@/components/approval-card";
 import { BatchTable } from "@/components/batch-table";
 import { Composer } from "@/components/composer";
+import { BatchIcon, CrossIcon, UploadIcon } from "@/components/icons";
 import { LiveStatus } from "@/components/live-status";
 import { LocaleSwitch } from "@/components/locale-switch";
+import { Spinner } from "@/components/spinner";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { MAX_FILES } from "@/lib/events";
 import { useLocale } from "@/lib/i18n";
@@ -13,11 +15,25 @@ import { useRun } from "@/lib/use-run";
 import { useEffect, useRef, useState } from "react";
 
 // Both top actions read as one pair, not "the important one" and "the other
-// one" - same neutral rest state, same yellow accent on hover, on-header
-// tokens rather than surface ones since this bar sits on the same colored
-// background as the title bar (navy in dark mode, AWS blue in light mode).
+// one" - same neutral rest state, same accent on hover, on-header tokens rather
+// than surface ones since this bar sits on the same colored background as the
+// title bar (navy in dark mode, AWS blue in light mode).
+//
+// Two changes to the original: hover brightens the label instead of turning it
+// `primary`, because orange on the light theme's blue header is 2.8:1 and
+// unreadable across a room; and the fixed w-56 became a minimum, because the
+// German labels plus an icon overflow a fixed 224px.
 const TOP_BUTTON =
-  "state-layer pressable flex w-56 cursor-pointer items-center justify-center rounded-full border border-on-header/25 bg-on-header/10 px-3.5 py-2 font-medium text-[14px] text-on-header transition-colors hover:border-primary hover:text-primary disabled:opacity-50 disabled:hover:border-on-header/25 disabled:hover:text-on-header focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-primary";
+  "state-layer pressable flex min-h-[44px] min-w-[224px] flex-1 cursor-pointer items-center justify-center gap-2.5 rounded-full border border-on-header/30 bg-on-header/10 px-5 font-medium text-[15px] text-on-header transition-colors hover:border-on-header/60 hover:bg-on-header/20 disabled:opacity-50 disabled:hover:border-on-header/30 disabled:hover:bg-on-header/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-on-header sm:flex-none";
+
+// The three stages the sample run will actually show, in the order the rail on
+// the left lights them up. The sequence is the information here, which is why
+// it is an ordered list and not three cards.
+const EMPTY_STEPS = [
+  ["stageExtract", "emptyStep1"],
+  ["stageValidate", "emptyStep2"],
+  ["stageApprove", "emptyStep3"],
+] as const;
 
 export default function Page() {
   const { locale, setLocale, t } = useLocale();
@@ -61,16 +77,27 @@ export default function Page() {
   );
   const approvable = run.state === "awaiting-approval" || run.state === "posting";
 
-  // Follow the newest content, but only while the reader is already at the
-  // bottom. Yanking someone back down while they are reading an earlier answer
-  // is worse than not following at all.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: the run object is the signal
+  // Follow the conversation, and only the conversation.
+  //
+  // This used to key on the whole `run` object, which changes on every one of
+  // the ~96 rule events a batch emits. The viewport chased a table that was
+  // still growing, once per event, for the length of the run - on screen that
+  // read as the page crawling downward on its own while the answer you were
+  // reading slid off the top. Rule events must move nothing: the table lives in
+  // its own scroll container now and has its own motion to show progress.
+  //
+  // A new message and the tail of a streaming one are the only two things worth
+  // following, and even then only while the reader is already at the bottom -
+  // yanking someone back down mid-sentence is worse than not following at all.
+  const messageCount = chatMessages.length;
+  const streamingTail = chatMessages.at(-1)?.text ?? "";
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the count and the streaming tail are the signal; widening these deps is exactly what caused the chase
   useEffect(() => {
     const box = transcript.current;
     if (!box) return;
     const distance = box.scrollHeight - box.scrollTop - box.clientHeight;
     if (distance < 140) box.scrollTop = box.scrollHeight;
-  }, [run]);
+  }, [messageCount, streamingTail]);
 
   async function begin() {
     reset();
@@ -119,7 +146,10 @@ export default function Page() {
   }
 
   return (
-    <main className="flex min-h-screen w-full flex-col bg-surface">
+    // A fixed-height shell, not a growing page. Each region below owns its own
+    // scrolling, which is the only way the composer and the approval gate can be
+    // guaranteed on screen without the clerk hunting for them.
+    <main className="flex h-screen w-full flex-col overflow-hidden bg-surface">
       <div className="h-[3px] flex-none">
         {busy ? (
           <div className="progress-track h-full w-full">
@@ -128,8 +158,8 @@ export default function Page() {
         ) : null}
       </div>
 
-      <header className="flex flex-wrap items-center gap-5 border-outline-variant border-b bg-header px-6 py-4">
-        <div className="font-semibold text-[17px] text-on-header uppercase tracking-[0.11em]">
+      <header className="flex flex-none flex-wrap items-center gap-5 border-outline-variant border-b bg-header px-8 py-4">
+        <div className="font-semibold text-[21px] text-on-header uppercase tracking-[0.12em]">
           STRIKE <span className="text-primary">AP</span>
         </div>
 
@@ -154,8 +184,8 @@ export default function Page() {
           setDragging(false);
           onFiles(Array.from(e.dataTransfer.files));
         }}
-        className={`flex flex-wrap items-center justify-center gap-3 border-outline-variant border-b bg-header px-6 py-4 transition-colors ${
-          dragging ? "bg-primary/[0.12]" : ""
+        className={`flex flex-none flex-wrap items-center gap-x-6 gap-y-3 border-outline-variant border-b bg-header px-8 py-4 transition-colors ${
+          dragging ? "bg-primary/[0.12] ring-2 ring-primary ring-inset" : ""
         }`}
       >
         <input
@@ -171,45 +201,55 @@ export default function Page() {
             e.target.value = "";
           }}
         />
-        <button
-          type="button"
-          disabled={busy || run.answering}
-          onClick={() => fileInput.current?.click()}
-          className={TOP_BUTTON}
-        >
-          {uploading ? t("uploading") : t("uploadFiles")}
-        </button>
-        <button
-          type="button"
-          disabled={busy || run.answering}
-          onClick={() => begin()}
-          className={TOP_BUTTON}
-        >
-          {t("loadBatch")}
-        </button>
+        {/* The bar was two unlabelled pills. It is a drop target and nothing on
+            it said so - this is the sentence that makes the whole bar legible. */}
+        <p className="max-w-[46ch] text-[15px] text-on-header/85 leading-6">{t("dropHint")}</p>
+
+        <div className="ml-auto flex flex-1 flex-wrap items-center gap-3 sm:flex-none">
+          <button
+            type="button"
+            disabled={busy || run.answering}
+            onClick={() => fileInput.current?.click()}
+            className={TOP_BUTTON}
+          >
+            {uploading ? <Spinner className="h-4 w-4" /> : <UploadIcon className="h-4 w-4" />}
+            {uploading ? t("uploading") : t("uploadFiles")}
+          </button>
+          <button
+            type="button"
+            disabled={busy || run.answering}
+            onClick={() => begin()}
+            className={TOP_BUTTON}
+          >
+            <BatchIcon className="h-4 w-4" />
+            {t("loadBatch")}
+          </button>
+        </div>
       </div>
 
       <div className="flex min-h-0 flex-1">
         {started ? (
-          <aside className="w-[190px] flex-none overflow-y-auto border-outline-variant border-r bg-surface-container-low px-5 py-6">
+          <aside className="w-[236px] flex-none overflow-y-auto border-outline-variant border-r bg-surface-container-low px-6 py-7">
             <LiveStatus state={run.state} messages={statusMessages} t={t} />
           </aside>
         ) : null}
 
         <div className="flex min-h-0 flex-1 flex-col">
-          {/* The transcript scrolls, the shell does not. A long conversation
-              otherwise pushes the composer off the bottom of the window, so the
-              input you need is the one thing you have to scroll away from. */}
-          <div
-            ref={transcript}
-            className="flex min-h-[560px] min-w-0 flex-1 flex-col gap-5 overflow-auto overscroll-contain px-6 pt-6 pb-4"
-          >
+          {/* The work pane: the batch, and nothing that streams.
+              It scrolls on its own and is never scrolled by anything else, so a
+              table that grows to twenty rows stays exactly where the clerk left
+              it instead of shoving the conversation off the screen. */}
+          {/* The floor matters: without it this pane is the only thing that can
+              shrink, so a long answer plus the gate squeezed the batch down to
+              its header row on a laptop. Below this height the conversation
+              yields instead. */}
+          <div className="min-h-[220px] min-w-0 flex-1 overflow-auto overscroll-contain px-8 py-6">
             {files.length > 0 ? (
-              <div className="flex flex-col gap-2.5">
-                <div className="font-semibold text-[12px] text-on-surface-faint uppercase tracking-[0.12em]">
+              <div className="mb-5 flex flex-col gap-2.5">
+                <div className="font-semibold text-[13px] text-on-surface-faint uppercase tracking-[0.12em]">
                   {t("you")}
                 </div>
-                <div className="flex flex-wrap gap-1.5">
+                <div className="flex flex-wrap gap-2">
                   {files.map((name, index) => {
                     // A repeated file stays visible, labelled. Removing it would
                     // leave the person wondering which of the ten they dropped
@@ -219,7 +259,7 @@ export default function Page() {
                       <span
                         key={name}
                         style={{ animationDelay: `${index * 30}ms` }}
-                        className={`chip-in rounded-[8px] border border-outline-variant bg-surface-container px-2 py-1 text-[13px] ${
+                        className={`chip-in rounded-[8px] border border-outline-variant bg-surface-container px-2.5 py-1.5 text-[15px] ${
                           repeat ? "text-on-surface-faint line-through" : "text-on-surface-variant"
                         }`}
                         title={repeat ? t("duplicateOf", { of: repeat.of }) : undefined}
@@ -230,7 +270,7 @@ export default function Page() {
                   })}
                 </div>
                 {repeats.length > 0 ? (
-                  <p className="max-w-[72ch] text-[15px] text-on-surface-variant">
+                  <p className="max-w-[70ch] text-[16px] text-on-surface-variant">
                     {t("duplicatesSkipped", { count: repeats.length })}
                   </p>
                 ) : null}
@@ -238,75 +278,132 @@ export default function Page() {
             ) : null}
 
             {started ? (
-              <div className="flex flex-col gap-2.5">
-                {chatMessages.map((message, index) => {
-                  // Label only when the speaker changes. Repeating "AGENT" above
-                  // every sentence of a run turns a transcript into a stutter.
-                  const speakerChanged =
-                    index === 0 || chatMessages[index - 1].role !== message.role;
-                  return (
-                    <div
-                      // Index alone. Keying on the text remounts the paragraph
-                      // on every delta of a streaming answer, which restarts the
-                      // enter animation once per token.
-                      // biome-ignore lint/suspicious/noArrayIndexKey: messages are only appended
-                      key={index}
-                      className="flex flex-col gap-2.5"
+              run.invoices.length > 0 ? (
+                <BatchTable
+                  invoices={run.invoices}
+                  approvable={approvable}
+                  parkingIds={run.parkingIds}
+                  onApprove={(id) => approve([id])}
+                  onAsk={(question) => ask(locale, question)}
+                  asking={busy || run.answering}
+                  t={t}
+                />
+              ) : null
+            ) : (
+              /* Cold open. A judge arriving at this screen was previously shown
+                 two unexplained pills and an empty page; this says what the
+                 product does, what to do next, and what the sample run will
+                 actually show them. */
+              /* min-h-full + justify-center rather than fixed padding: on a
+                 projector the block sits centred in the pane, and on a laptop
+                 the pane simply scrolls instead of hiding the three lines that
+                 say what the sample run will do. */
+              <div className="enter mx-auto flex min-h-full w-full max-w-[900px] flex-col justify-center gap-5 py-6">
+                <h1 className="max-w-[36ch] text-balance font-semibold text-[clamp(25px,2.4vw,36px)] text-on-surface leading-[1.18] tracking-[-0.02em]">
+                  {t("emptyTitle")}
+                </h1>
+                <p className="max-w-[64ch] text-[18px] text-on-surface-variant leading-7">
+                  {t("emptyBody")}
+                </p>
+                <ol className="flex max-w-[76ch] flex-col border-outline-variant border-t">
+                  {EMPTY_STEPS.map(([stage, body]) => (
+                    <li
+                      key={stage}
+                      className="flex flex-col gap-1 border-outline-variant border-b py-3.5 sm:flex-row sm:gap-6"
                     >
-                      {speakerChanged ? (
-                        <div
-                          className={`font-semibold text-[12px] uppercase tracking-[0.12em] ${
-                            message.role === "agent" ? "text-secondary" : "text-on-surface-faint"
-                          }`}
-                        >
-                          {t(message.role)}
-                        </div>
-                      ) : null}
-                      <p className="enter max-w-[78ch] whitespace-pre-wrap text-[17px] text-on-surface leading-7">
-                        {/* An answer that has not produced a token yet still gets
-                            a bubble, so the question never looks unheard. */}
-                        {message.text || (message.streaming ? "…" : "")}
-                      </p>
-                    </div>
-                  );
-                })}
-
-                {run.invoices.length > 0 ? (
-                  <BatchTable
-                    invoices={run.invoices}
-                    approvable={approvable}
-                    parkingIds={run.parkingIds}
-                    onApprove={(id) => approve([id])}
-                    onAsk={(question) => ask(locale, question)}
-                    asking={busy || run.answering}
-                    t={t}
-                  />
-                ) : null}
-
-                {(run.state === "awaiting-approval" && remainingReadyIds.length > 0) ||
-                (run.state === "posting" && run.parkingIds.length > 1) ? (
-                  <ApprovalCard
-                    // While a batch approval is in flight, show how many are
-                    // actually being parked right now, not the original count -
-                    // the card must keep counting down, not freeze mid-batch.
-                    readyCount={
-                      run.parkingIds.length > 1 ? run.parkingIds.length : remainingReadyIds.length
-                    }
-                    blockedCount={run.blockedIds.length}
-                    working={run.state === "posting"}
-                    onApprove={() => approve(remainingReadyIds)}
-                    t={t}
-                  />
-                ) : null}
-
-                {run.error ? (
-                  <p className="max-w-[62ch] border-error border-l-2 pl-3 text-error">
-                    {run.error}
-                  </p>
-                ) : null}
+                      <span className="w-[9rem] flex-none pt-0.5 font-semibold text-[14px] text-primary uppercase tracking-[0.1em]">
+                        {t(stage)}
+                      </span>
+                      <span className="max-w-[60ch] text-[17px] text-on-surface leading-7">
+                        {t(body)}
+                      </span>
+                    </li>
+                  ))}
+                </ol>
               </div>
-            ) : null}
+            )}
           </div>
+
+          {/* Everything below this line is pinned above the composer. A run that
+              needs a decision, an error that needs reading, and the answer to
+              the question just asked are the three things that must never be
+              somewhere off-screen. */}
+          {run.error ? (
+            <div
+              role="alert"
+              className="enter flex flex-none items-start gap-3 border-error/40 border-t bg-error/[0.08] px-8 py-4"
+            >
+              <CrossIcon className="mt-1 h-5 w-5 flex-none text-error" />
+              <p className="max-w-[70ch] text-[17px] text-on-surface leading-7">{run.error}</p>
+            </div>
+          ) : null}
+
+          {(run.state === "awaiting-approval" && remainingReadyIds.length > 0) ||
+          (run.state === "posting" && run.parkingIds.length > 1) ? (
+            <div className="flex flex-none justify-center border-outline-variant border-t bg-surface-container-low px-8 py-4">
+              <ApprovalCard
+                // While a batch approval is in flight, show how many are
+                // actually being parked right now, not the original count -
+                // the card must keep counting down, not freeze mid-batch.
+                readyCount={
+                  run.parkingIds.length > 1 ? run.parkingIds.length : remainingReadyIds.length
+                }
+                blockedCount={run.blockedIds.length}
+                working={run.state === "posting"}
+                onApprove={() => approve(remainingReadyIds)}
+                t={t}
+              />
+            </div>
+          ) : null}
+
+          {/* The conversation, directly above the box you typed into. Bounded
+              rather than flexible: it takes a third of the viewport at most, so
+              a long answer scrolls inside itself instead of squeezing the batch
+              out of the pane above.
+
+              Shrinkable, not `flex-none`. On a laptop the two panes together ask
+              for more height than there is, and something has to give: the batch
+              has a 220px floor and this does not, so the conversation yields and
+              scrolls inside itself rather than crushing the table to its header
+              row. `min-h-0` is what actually permits that - a flex child refuses
+              to shrink below its content without it. */}
+          {chatMessages.length > 0 ? (
+            <div
+              ref={transcript}
+              className="flex max-h-[min(34vh,320px)] min-h-0 shrink flex-col gap-3 overflow-auto overscroll-contain border-outline-variant border-t px-8 py-4"
+            >
+              {chatMessages.map((message, index) => {
+                // Label only when the speaker changes. Repeating "AGENT" above
+                // every sentence of a run turns a transcript into a stutter.
+                const speakerChanged = index === 0 || chatMessages[index - 1].role !== message.role;
+                return (
+                  <div
+                    // Index alone. Keying on the text remounts the paragraph
+                    // on every delta of a streaming answer, which restarts the
+                    // enter animation once per token.
+                    // biome-ignore lint/suspicious/noArrayIndexKey: messages are only appended
+                    key={index}
+                    className="flex flex-col gap-1.5"
+                  >
+                    {speakerChanged ? (
+                      <div
+                        className={`font-semibold text-[13px] uppercase tracking-[0.12em] ${
+                          message.role === "agent" ? "text-secondary" : "text-on-surface-faint"
+                        }`}
+                      >
+                        {t(message.role)}
+                      </div>
+                    ) : null}
+                    <p className="enter max-w-[72ch] whitespace-pre-wrap text-[18px] text-on-surface leading-8">
+                      {/* An answer that has not produced a token yet still gets
+                          a bubble, so the question never looks unheard. */}
+                      {message.text || (message.streaming ? "…" : "")}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
 
           <Composer
             // A message is always a question, a submit with no message is always

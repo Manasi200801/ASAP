@@ -2,6 +2,7 @@
 
 import type { Translate } from "@/lib/i18n";
 import { useState } from "react";
+import { ArrowIcon, ShieldIcon } from "./icons";
 
 /**
  * The single human approval gate.
@@ -9,6 +10,14 @@ import { useState } from "react";
  * The label carries the whole consequence rather than floating a count above it,
  * and the excluded invoice is named rather than silently dropped. Both exist
  * because a clerk hesitates when they are not certain what they are agreeing to.
+ *
+ * It is pinned above the composer rather than parked in the scrolling column, so
+ * the one decision the run stops for can never be scrolled past. Everything
+ * about it is a size larger and slower than the rest of the page - a 56px
+ * target, an entrance that travels further over 440ms, one halo beat and then
+ * stillness. The safety line is not fine print: it sits at reading size next to
+ * a drawn mark, because "nothing is paid" is the sentence that lets someone
+ * press this.
  *
  * `working` comes from the run, not local state - a batch approval can come back
  * with some invoices still unparked (a SAP write can fail for one and succeed for
@@ -42,26 +51,31 @@ export function ApprovalCard({
   }
 
   return (
-    <div className="enter flex max-w-[620px] flex-col gap-3 rounded-[12px] border border-outline-variant bg-surface-container-high p-4 shadow-[0_1px_3px_rgba(0,0,0,0.4)]">
+    <div className="gate-in elevated-2 flex w-full max-w-[720px] flex-col gap-4 rounded-[14px] border border-primary/35 bg-surface-container-high p-5">
       <button
         type="button"
         onClick={approve}
         disabled={working}
         aria-busy={working}
-        className="state-layer pressable flex min-h-[48px] w-full cursor-pointer items-center justify-between gap-3 rounded-full bg-primary px-6 font-medium text-[16px] text-on-primary transition-opacity disabled:cursor-default disabled:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[3px] focus-visible:outline-primary"
+        className={`state-layer pressable flex min-h-[56px] w-full cursor-pointer items-center justify-between gap-4 rounded-full bg-primary px-7 font-semibold text-[19px] text-on-primary transition-opacity disabled:cursor-default disabled:opacity-80 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-[3px] focus-visible:outline-on-surface ${
+          working ? "" : "gate-halo"
+        }`}
       >
-        <span className="label-swap" data-swapping={justClicked}>
+        <span className="label-swap text-left" data-swapping={justClicked}>
           {working
             ? t("approveWorking", { count: readyCount })
             : t("approveLabel", { count: readyCount })}
         </span>
-        <span className="opacity-80">→</span>
+        <ArrowIcon className="h-5 w-5 flex-none opacity-90" />
       </button>
 
-      <div className="flex justify-between gap-3 text-[14px] text-on-surface-variant">
-        <span>{t("approveSub")}</span>
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <p className="flex items-center gap-2.5 text-[16px] text-on-surface-variant">
+          <ShieldIcon className="h-5 w-5 flex-none text-success" />
+          {t("approveSub")}
+        </p>
         {blockedCount > 0 ? (
-          <span className="whitespace-nowrap text-[13.5px] text-error">
+          <span className="inline-flex items-center whitespace-nowrap rounded-full border border-error/45 bg-error-container px-3 py-1 font-semibold text-[14px] text-on-error-container uppercase tracking-[0.05em]">
             {t("excluded", { count: blockedCount })}
           </span>
         ) : null}

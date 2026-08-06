@@ -263,15 +263,26 @@ body {
 
 @keyframes row-alert {
   from {
-    background-color: color-mix(in srgb, var(--color-error) 30%, transparent);
+    opacity: 1;
   }
   to {
-    background-color: color-mix(in srgb, var(--color-error) 7%, transparent);
+    opacity: 0.24;
   }
 }
 
+/* The wash lives on a pseudo-element rather than the row's own background for
+   two reasons: the row already spends its `animation` on `.enter`, and its
+   `background` on the hover state. Neither has to be given up this way. */
 .row-alert {
-  background-color: color-mix(in srgb, var(--color-error) 7%, transparent);
+  position: relative;
+}
+
+.row-alert::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--color-error) 28%, transparent);
   animation: row-alert calc(1100ms * var(--m)) var(--ease-out) both;
 }
 
@@ -425,8 +436,9 @@ body {
   }
   /* The blocked row keeps its resting tint - the meaning was never in the
      movement - it just does not wash in. */
-  .row-alert {
+  .row-alert::before {
     animation: none;
+    opacity: 0.24;
   }
   .reveal,
   .sapref,
