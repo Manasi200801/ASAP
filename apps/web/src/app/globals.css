@@ -1,0 +1,166 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ground: #0a0a0b;
+  --color-surface-1: #101013;
+  --color-surface-2: #16161b;
+  --color-surface-3: #1c1c22;
+  --color-line: #1f1f26;
+  --color-line-strong: #2c2c35;
+  --color-ink: #e9e9ee;
+  --color-ink-dim: #8c8c99;
+  --color-ink-faint: #575761;
+  --color-brass: #c89b3c;
+  --color-brass-deep: #6e5522;
+  --color-ok: #3fb950;
+  --color-ok-deep: #143d1c;
+  --color-blocked: #f0524a;
+  --color-blocked-deep: #3b1512;
+  --color-agent: #7fa8d9;
+  --color-agent-deep: #23364d;
+  --color-pending: #4c4c57;
+
+  --font-data: ui-monospace, SFMono-Regular, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+}
+
+:root {
+  color-scheme: dark;
+  /* Slow-motion review control multiplies every duration. */
+  --m: 1;
+}
+
+body {
+  background: var(--color-ground);
+  color: var(--color-ink);
+}
+
+/* ---- entrances: stagger comes from event arrival, never from nth-child ---- */
+
+@keyframes enter {
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.enter {
+  opacity: 0;
+  transform: translateY(6px);
+  animation: enter calc(220ms * var(--m)) var(--ease-out) forwards;
+}
+
+@keyframes chip-in {
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.chip-in {
+  opacity: 0;
+  transform: scale(0.96);
+  animation: chip-in calc(120ms * var(--m)) var(--ease-out) forwards;
+}
+
+@keyframes call-in {
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.call-in {
+  opacity: 0;
+  transform: translateY(4px);
+  animation: call-in calc(160ms * var(--m)) var(--ease-out) forwards;
+}
+
+/* ---- rule chip: colour arrives with the scale, never before ---- */
+
+@keyframes tick {
+  from {
+    transform: scale(0.94);
+  }
+  to {
+    transform: none;
+  }
+}
+
+.tick {
+  animation: tick calc(140ms * var(--m)) var(--ease-out);
+}
+
+/* ---- auto height without JS measurement ---- */
+
+.reveal {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows calc(240ms * var(--m)) var(--ease-out);
+}
+
+.reveal[data-open="true"] {
+  grid-template-rows: 1fr;
+}
+
+.reveal > * {
+  overflow: hidden;
+}
+
+/* ---- SAP document reference on park ---- */
+
+.sapref {
+  opacity: 0;
+  transform: translateX(4px);
+  transition: opacity calc(180ms * var(--m)) var(--ease-out), transform calc(180ms * var(--m))
+    var(--ease-out);
+}
+
+.sapref[data-on="true"] {
+  opacity: 1;
+  transform: none;
+}
+
+/* ---- blurred label swap; width is reserved by the flex row ---- */
+
+.label-swap {
+  transition: filter calc(200ms * var(--m)) ease, opacity calc(200ms * var(--m)) ease;
+}
+
+.label-swap[data-swapping="true"] {
+  filter: blur(2px);
+  opacity: 0.7;
+}
+
+/* ---- press feedback ---- */
+
+.pressable {
+  transition: transform calc(160ms * var(--m)) var(--ease-out);
+}
+
+.pressable:active {
+  transform: scale(0.97);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .enter,
+  .chip-in,
+  .call-in,
+  .tick {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+  .reveal,
+  .sapref {
+    transition: none;
+  }
+  .sapref {
+    transform: none;
+  }
+  .pressable:active {
+    transform: none;
+  }
+}

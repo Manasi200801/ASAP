@@ -16,6 +16,10 @@ out/
 *.log
 npm-debug.log*
 .turbo/
+next-env.d.ts
+*.tsbuildinfo
+coverage/
+.vercel
 
 # --- Python ---
 __pycache__/
@@ -38,3 +42,6 @@ Thumbs.db
 
 # --- skills CLI cache ---
 .skills-cache/
+
+# Claude Code local settings (machine-specific paths)
+.claude/settings.local.json

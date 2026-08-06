@@ -1,0 +1,9 @@
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+pydantic>=2.9.0
+
+# Live SAP + Bedrock. Not needed to run against the fake backends.
+boto3>=1.35.0
+strands-agents>=0.1.0
+mcp>=1.0.0
+python-dotenv>=1.0.0
