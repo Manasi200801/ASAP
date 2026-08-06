@@ -60,6 +60,9 @@ class Run:
     locale: str = "en"
     state: State = "uploaded"
     sequence_base: int = 1
+    # The demo batch rather than uploaded documents. Kept out of the duplicate
+    # check, which exists to protect real payments.
+    sample: bool = False
     invoices: list[Extracted] = field(default_factory=list)
     ready: list[str] = field(default_factory=list)
     blocked: list[str] = field(default_factory=list)
@@ -210,6 +213,9 @@ async def validate_run(
 ) -> AsyncIterator[ev.Event]:
     """Read-only. Extract, validate, summarise, then wait for a human."""
 
+    # Recorded on the run so the database can tell fixture data from documents a
+    # person actually uploaded. See `db.parked_before`.
+    run.sample = sample
     run.state = "extracting"
     yield ev.Text(delta="Files received. Reading them now.")
     await asyncio.sleep(BEAT)

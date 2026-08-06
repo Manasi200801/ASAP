@@ -35,6 +35,11 @@ CREATE TABLE IF NOT EXISTS runs (
     account    TEXT NOT NULL,
     locale     TEXT NOT NULL,
     state      TEXT NOT NULL,
+    -- The demo batch, rather than documents somebody uploaded. Stored like any
+    -- other run so the chat can answer about it, but never allowed to arm the
+    -- duplicate check: rehearsing at midnight would otherwise block the whole
+    -- batch at two in the afternoon.
+    sample     INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -132,9 +137,9 @@ def save_run(run: Any) -> None:
 
     with closing(connect()) as connection, connection:
         connection.execute(
-            "INSERT INTO runs (run_id, account, locale, state) VALUES (?, ?, ?, ?) "
+            "INSERT INTO runs (run_id, account, locale, state, sample) VALUES (?, ?, ?, ?, ?) "
             "ON CONFLICT(run_id) DO UPDATE SET state = excluded.state",
-            (run.run_id, run.account, run.locale, run.state),
+            (run.run_id, run.account, run.locale, run.state, int(getattr(run, "sample", False))),
         )
 
         for inv in run.invoices:
@@ -217,15 +222,21 @@ def parked_before(vendor: str, supplier_invoice_id: str, run_id: str) -> dict | 
 
     Scoped to invoices that actually reached SAP: one that was merely checked and
     left unapproved is not a duplicate of anything.
+
+    Demo runs are excluded. The sample batch is fixture data, not a supplier's
+    document, and blocking on it protects nothing while guaranteeing that any
+    rehearsal makes the next demo fail. Uploaded invoices are matched in full.
     """
     if not supplier_invoice_id:
         return None
     with closing(connect()) as connection:
         row = connection.execute(
-            "SELECT invoice_id, run_id, sap_document, file, created_at FROM invoices "
-            "WHERE vendor = ? AND supplier_invoice_id = ? AND run_id != ? "
-            "AND sap_document IS NOT NULL AND sap_document != '' "
-            "ORDER BY created_at DESC LIMIT 1",
+            "SELECT i.invoice_id, i.run_id, i.sap_document, i.file, i.created_at "
+            "FROM invoices i JOIN runs r ON r.run_id = i.run_id "
+            "WHERE i.vendor = ? AND i.supplier_invoice_id = ? AND i.run_id != ? "
+            "AND i.sap_document IS NOT NULL AND i.sap_document != '' "
+            "AND r.sample = 0 "
+            "ORDER BY i.created_at DESC LIMIT 1",
             (vendor, supplier_invoice_id, run_id),
         ).fetchone()
     return dict(row) if row else None

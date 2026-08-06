@@ -293,15 +293,18 @@ def test_an_invoice_parked_last_week_cannot_be_parked_again() -> None:
         sap, judge = FakeSap(), FakeJudge()
         store = RunStore()
 
+        # Not sample=True: the demo batch is fixture data and is deliberately
+        # exempt, so a rehearsal cannot block the live demo an hour later. These
+        # stand in for documents somebody uploaded.
         first = store.create("r_week1", "516359819848", "en")
-        asyncio.run(collect(validate_run(first, [], sap, judge, sample=True)))
+        asyncio.run(collect(validate_run(first, [], sap, judge)))
         asyncio.run(collect(post_run(first, sap)))
         assert first.sap_documents, "the first run must actually park something"
 
         # Same invoices, a new run, fresh references - which is exactly what used
         # to make this sail through all sixteen checks.
         second = store.create("r_week2", "516359819848", "en")
-        events = asyncio.run(collect(validate_run(second, [], sap, judge, sample=True)))
+        events = asyncio.run(collect(validate_run(second, [], sap, judge)))
 
         approval = next(e for e in events if isinstance(e, ev.Approval))
         parked = list(first.sap_documents)
@@ -313,6 +316,31 @@ def test_an_invoice_parked_last_week_cannot_be_parked_again() -> None:
         )
         document = first.sap_documents[repeat.invoiceId]
         assert document in (repeat.detail or ""), "the reason must name the document it repeats"
+
+
+def test_rehearsing_the_demo_cannot_block_the_demo() -> None:
+    """The sample batch is fixture data, and must not arm the duplicate check.
+
+    Parking it once at midnight would otherwise block every invoice in it at two
+    the following afternoon - a control that protects nothing, failing at the
+    only moment anyone is watching.
+    """
+    with its_own_database():
+        sap, judge = FakeSap(), FakeJudge()
+        store = RunStore()
+
+        rehearsal = store.create("r_rehearsal", "516359819848", "en")
+        asyncio.run(collect(validate_run(rehearsal, [], sap, judge, sample=True)))
+        asyncio.run(collect(post_run(rehearsal, sap)))
+        assert rehearsal.sap_documents, "the rehearsal must really have parked"
+
+        # Fresh SAP, as a new day would be: only our own database remembers.
+        demo = store.create("r_demo", "516359819848", "en")
+        events = asyncio.run(collect(validate_run(demo, [], FakeSap(), judge, sample=True)))
+
+        approval = next(e for e in events if isinstance(e, ev.Approval))
+        assert len(approval.readyIds) == 5, approval.readyIds
+        assert approval.blockedIds == ["FPL-9999"], approval.blockedIds
 
 
 def test_the_reference_tool_says_nothing_rather_than_guessing() -> None:
