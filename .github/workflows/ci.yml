@@ -24,3 +24,19 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+
+  agent:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The checks run against the fake SAP and judge backends, so CI needs no
+      # AWS credentials and stays green whether or not Lab 05 is deployed.
+      - run: pip install pydantic
+      - run: python tests/test_run.py
