@@ -11,6 +11,7 @@ import contextlib
 import os
 import sys
 import tempfile
+from contextlib import closing
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -316,6 +317,45 @@ def test_an_invoice_parked_last_week_cannot_be_parked_again() -> None:
         )
         document = first.sap_documents[repeat.invoiceId]
         assert document in (repeat.detail or ""), "the reason must name the document it repeats"
+
+
+def test_a_database_from_before_a_column_existed_still_opens() -> None:
+    """Schema changes must not require anyone to delete their data.
+
+    CREATE TABLE IF NOT EXISTS leaves an existing table exactly as it was, so a
+    file created before a column was added kept the old shape and every query
+    naming that column failed with "no such column" - on a machine whose only
+    mistake was having run the project before.
+    """
+    import sqlite3
+
+    from app import db
+
+    previous = os.environ["AP_DB_PATH"]
+    old = Path(tempfile.gettempdir()) / "strike-ap-old-shape.db"
+    old.unlink(missing_ok=True)
+
+    # The runs table as it was before `sample` was added.
+    with sqlite3.connect(old) as raw:
+        raw.execute(
+            "CREATE TABLE runs (run_id TEXT PRIMARY KEY, account TEXT NOT NULL, "
+            "locale TEXT NOT NULL, state TEXT NOT NULL, "
+            "created_at TEXT NOT NULL DEFAULT (datetime('now')))"
+        )
+        raw.execute("INSERT INTO runs (run_id, account, locale, state) VALUES ('r_old','a','en','done')")
+
+    os.environ["AP_DB_PATH"] = str(old)
+    try:
+        # The query that used to fail outright.
+        assert db.parked_before("17401710", "FPL-1563", "r_new") is None
+        with closing(db.connect()) as connection:
+            columns = {row["name"] for row in connection.execute("PRAGMA table_info(runs)")}
+            assert "sample" in columns, columns
+            kept = connection.execute("SELECT run_id, sample FROM runs").fetchone()
+            assert kept["run_id"] == "r_old", "existing rows survive the migration"
+            assert kept["sample"] == 0, "and default to not being demo data"
+    finally:
+        os.environ["AP_DB_PATH"] = previous
 
 
 def test_rehearsing_the_demo_cannot_block_the_demo() -> None:

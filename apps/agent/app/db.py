@@ -96,6 +96,18 @@ CREATE INDEX IF NOT EXISTS messages_session ON messages (session_id, id);
 """
 
 
+# Columns added after a database may already exist in the wild.
+#
+# `CREATE TABLE IF NOT EXISTS` does nothing to a table that is already there, so
+# an older file keeps its original shape and every query naming a new column
+# fails with "no such column" - on a machine that has simply been running the
+# project for a while. Adding them here means a teammate pulls and it works,
+# rather than pulling and being told to delete their data.
+ADDED_COLUMNS = [
+    ("runs", "sample", "INTEGER NOT NULL DEFAULT 0"),
+]
+
+
 def path() -> Path:
     return Path(os.getenv("AP_DB_PATH") or DEFAULT_PATH)
 
@@ -118,6 +130,14 @@ def connect() -> sqlite3.Connection:
     # Every statement is IF NOT EXISTS and this costs microseconds, which buys
     # the guarantee that no caller can ever query a database nobody initialised.
     connection.executescript(SCHEMA)
+
+    for table, column, spec in ADDED_COLUMNS:
+        present = {row["name"] for row in connection.execute(f"PRAGMA table_info({table})")}
+        if column not in present:
+            log.info("adding %s.%s to an existing database", table, column)
+            connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {spec}")
+            connection.commit()
+
     return connection
 
 
