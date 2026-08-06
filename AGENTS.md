@@ -73,6 +73,27 @@ install required. Third-party skills keep their upstream license under `.agents/
 | `pick-ui-library` | Choosing a real, trusted UI/toast/component library instead of hand-rolling one |
 | `prototype` | Spinning up multiple UI variants of one component to compare |
 
+**Requirements / spec / debugging (Matt Pocock):**
+
+| Skill | Use for |
+|---|---|
+| `grill-me` + `grilling` | Relentless Q&A to stress-test a plan/idea before building it — round-based, one frontier of questions at a time |
+| `research` | Investigating an unknown before committing to an approach |
+| `to-spec` | Turning a grilled-out idea into a written spec |
+| `implement` | Executing a spec/plan into code |
+| `domain-modeling` | Modeling the problem domain (e.g. invoices, SAP entities, approval states) before coding |
+| `diagnosing-bugs` | Root-causing a bug (companion to `systematic-debugging`) |
+| `triage` | Sorting a pile of issues/bugs by what actually matters before the deadline |
+| `code-review` | Reviewing a diff/PR |
+| `resolving-merge-conflicts` | Untangling a merge conflict between teammates' branches |
+| `git-guardrails-claude-code` | Sets up Claude Code hooks that block `push --force`, `reset --hard`, `clean -f`, `branch -D` before they run — enforces the git rules above at the tool level |
+
+**Other (vendored on request, not hackathon-critical):**
+
+`writing-beats`, `writing-fragments`, `writing-shape` — Matt Pocock's article-writing pipeline
+(explore → ground → shape). `scaffold-exercises`, `migrate-to-shoehorn`, `setup-ts-deep-modules` —
+his course/TS-tooling scaffolding, only relevant if the stack ends up TypeScript-heavy.
+
 Use with whatever your agent's skill-invocation mechanism is (Claude Code: the `Skill` tool reading
 `.claude/skills/<name>/SKILL.md`; other agents: read `.agents/skills/<name>/SKILL.md` directly when
 the task matches).
