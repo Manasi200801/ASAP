@@ -4,27 +4,33 @@ The orchestrator behind `apps/web`. Implements `contract/events.md`.
 
 ## Run it
 
+First-time setup, including the virtualenv on both platforms, is in the root
+`README.md`. From the repo root, `npm run dev` starts this and the frontend
+together with prefixed logs. To run only this half:
+
 ```bash
 cd apps/agent
-python -m venv .venv && .venv/Scripts/activate     # macOS/Linux: source .venv/bin/activate
-pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
-```
-
-Then point the frontend at it:
-
-```bash
-# apps/web/.env.local
-AGENT_ENDPOINT=http://localhost:8000
 ```
 
 It runs with no AWS credentials. `FakeSap` and `FakeJudge` answer from the Lab 06
 demo data, so the full batch flow works today — five invoices park, `FPL-9999`
 blocks on the missing purchase order.
 
+`GET /health` reports which backends are live, and is the fastest way to catch
+the mistake of demoing against the fakes by accident:
+
+```json
+{ "status": "ok", "sap": "McpSap", "judge": "BedrockJudge" }
+```
+
 ```bash
 python tests/test_run.py     # 6 checks, no framework needed
 ```
+
+Set `LOG_LEVEL=DEBUG` for more detail. At the default `INFO` every SAP call
+reports its entity and latency, every model call its token counts, and every
+invoice its verdict and the rule that blocked it.
 
 ## Shape
 
@@ -53,16 +59,38 @@ own without touching the others or the frontend.
 
 | Variable | Default | Real value | What it needs |
 |---|---|---|---|
-| `SAP_BACKEND` | `fake` | `mcp` | Lab 05 deployed, `MCP_ENDPOINT` set |
+| `SAP_BACKEND` | `fake` | `mcp` | `AGENT_RUNTIME_ARN` — the AgentCore runtime hosting the SAP MCP server |
 | `EXTRACT_BACKEND` | `sample` | `bedrock` | `INVOICE_BUCKET`, Bedrock access |
 | `JUDGE_BACKEND` | `fake` | `bedrock` | Bedrock access, optionally `SOP_KNOWLEDGE_BASE_ID` |
 
-Every `NotImplementedError` in `sap.py`, `extract.py` and `judge.py` names the
-exact call it needs. The shapes they must return are already pinned by the fake
-implementations and covered by the tests, so nothing downstream changes.
+All three are live. `apps/agent/.env.example` carries the real values and says
+where each came from; copy it to `.env.local` and set `AWS_PROFILE=workshop`.
 
-**Start with `SAP_BACKEND=mcp`.** It is the only one that is externally blocked,
-and the only one a jury can see the difference on.
+The Cognito client id and secret are deliberately not in any file — `McpSap`
+reads them from Secrets Manager at runtime.
+
+## Knowledge bases
+
+`SOP_KNOWLEDGE_BASE_ID` grounds rule 9. Without it the price check falls back to
+a flat 5% and says so; with it, rule 9 reads the tiered policy in `docs/sops/`
+and cites the document it consulted.
+
+```bash
+python scripts/make_kb.py sops       # rebuilds it end to end, about 90 seconds
+```
+
+## Two ways into `/chat`
+
+Same endpoint, two behaviours, and the distinction matters:
+
+- **no message, or no run yet** — starts a run: extract, validate, stop at
+  `awaiting-approval`
+- **a message about a run that already exists** — answers the question from the
+  stored result, streaming the reply token by token
+
+Answering touches neither SAP nor the state machine. Totals in answers are
+computed in Python and handed to the model as facts, because a model asked to add
+up invoices will do it and get it wrong.
 
 ## Three traps
 
