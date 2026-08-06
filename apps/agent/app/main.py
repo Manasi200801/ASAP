@@ -135,6 +135,39 @@ async def approve(request: ApproveRequest) -> StreamingResponse:
     return stream(post_run(run, sap))
 
 
+@app.get("/ping")
+async def ping() -> dict[str, str]:
+    """AgentCore Runtime's health probe. It requires this exact path."""
+    return {"status": "Healthy"}
+
+
+@app.post("/invocations")
+async def invocations(payload: dict) -> StreamingResponse:
+    """AgentCore Runtime's single entry point.
+
+    A runtime gets one path, so the action rides in the body. The two real
+    endpoints stay exactly as they are - this only routes to them, which keeps
+    local development on plain HTTP and unaware that AgentCore exists.
+
+    The approval gate survives the indirection: `approve` still cannot post
+    unless the state machine says the run is awaiting approval, and that check
+    lives in post_run, not here.
+    """
+    action = payload.get("action", "chat")
+    log.info("invocations action=%s run=%s", action, payload.get("runId"))
+
+    if action == "approve":
+        return await approve(ApproveRequest(**{"runId": payload["runId"]}))
+
+    if action != "chat":
+        async def unknown() -> AsyncIterator[ev.Event]:
+            yield ev.Error(message=f"Unknown action {action!r}.", recoverable=False)
+
+        return stream(unknown())
+
+    return await chat(ChatRequest(**{k: v for k, v in payload.items() if k != "action"}))
+
+
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {

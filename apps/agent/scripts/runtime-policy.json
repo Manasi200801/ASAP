@@ -1,0 +1,31 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadInvoicePdfsAndDeploymentPackage",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:ListBucket"],
+      "Resource": [
+        "arn:aws:s3:::516359819848-invoice",
+        "arn:aws:s3:::516359819848-invoice/*",
+        "arn:aws:s3:::bedrock-agentcore-code-516359819848-us-east-1",
+        "arn:aws:s3:::bedrock-agentcore-code-516359819848-us-east-1/*"
+      ]
+    },
+    {
+      "Sid": "RetrieveApStandardOperatingProcedures",
+      "Effect": "Allow",
+      "Action": ["bedrock:Retrieve"],
+      "Resource": "arn:aws:bedrock:us-east-1:516359819848:knowledge-base/*"
+    },
+    {
+      "Sid": "CallTheSapMcpServer",
+      "Effect": "Allow",
+      "Action": ["bedrock-agentcore:InvokeAgentRuntime"],
+      "Resource": [
+        "arn:aws:bedrock-agentcore:us-east-1:516359819848:runtime/sap_mcp_server_1786023560-PTTQ1n8Y2J",
+        "arn:aws:bedrock-agentcore:us-east-1:516359819848:runtime/sap_mcp_server_1786023560-PTTQ1n8Y2J/*"
+      ]
+    }
+  ]
+}
