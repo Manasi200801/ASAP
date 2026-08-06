@@ -1,0 +1,40 @@
+# --- secrets ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+aws-credentials*
+.aws/
+
+# --- Node ---
+node_modules/
+dist/
+build/
+.next/
+out/
+*.log
+npm-debug.log*
+.turbo/
+
+# --- Python ---
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# --- large media (host externally per hackathon rules) ---
+*.mp4
+*.mov
+*.zip
+
+# --- skills CLI cache ---
+.skills-cache/
