@@ -39,6 +39,9 @@ BEAT = 0.52
 POSTING_DATE = "2025-03-15"
 MINUTES_PER_INVOICE_SAVED = 17
 
+# Question-and-answer pairs carried into the next question.
+HISTORY_TURNS = 6
+
 State = Literal[
     "uploaded", "extracting", "validating", "awaiting-approval", "posting", "done", "failed"
 ]
@@ -61,6 +64,11 @@ class Run:
     # version did and why asking a question re-ran six invoices.
     results: dict[str, list[RuleResult]] = field(default_factory=dict)
     headlines: dict[str, str] = field(default_factory=dict)
+
+    # Questions and answers, in order. Without it every question is the first
+    # question: "why was that one blocked?" has no idea which one, and "and the
+    # others?" is unanswerable. Scoped to the run, so a new batch starts clean.
+    conversation: list[tuple[str, str]] = field(default_factory=list)
 
     def reference_for(self, index: int) -> str:
         """`<account>-<n>`, capped at 16 characters by SAP.
@@ -399,6 +407,9 @@ Rules:
   something said in conversation.
 - Two or three sentences unless the question genuinely needs more. No headings,
   no bullet lists.
+- A question may refer back to what was already discussed - "that one", "the
+  others", "why not". Resolve it against the earlier turns you are given, and
+  do not make the user repeat themselves.
 """
 
 
@@ -485,12 +496,35 @@ async def answer_run(run: Run, message: str) -> AsyncIterator[ev.Event]:
         return
 
     language = "German" if run.locale == "de" else "English"
-    prompt = f"Run record:\n\n{_run_record(run)}\n\nQuestion: {message}\n\nAnswer in {language}."
+    parts = [f"Run record:\n\n{_run_record(run)}"]
+
+    if run.conversation:
+        # Only the recent turns. The run record is the source of truth and is sent
+        # in full every time; older chat adds tokens without adding facts, and a
+        # long tail of it starts competing with the record for the model's
+        # attention.
+        history = "\n\n".join(
+            f"Question: {question}\nYour answer: {answer}"
+            for question, answer in run.conversation[-HISTORY_TURNS:]
+        )
+        parts.append(f"Earlier in this conversation:\n\n{history}")
+
+    parts.append(f"Question: {message}\n\nAnswer in {language}.")
+    prompt = "\n\n".join(parts)
 
     from .bedrock import stream_text
 
+    spoken: list[str] = []
     try:
         async for delta in stream_text(ANSWER_SYSTEM, prompt):
+            spoken.append(delta)
             yield ev.Text(delta=delta)
     except Exception as error:  # noqa: BLE001 - a failed answer must not fail the run
         yield ev.Text(delta=f"I could not answer that: {error}")
+        return
+
+    # Only a complete answer is remembered. Recording a half-streamed one would
+    # teach the next turn to refer back to something the user never finished
+    # reading.
+    run.conversation.append((message, "".join(spoken)))
+    log.info("%s answered in %d turns of history", run.run_id, len(run.conversation))
