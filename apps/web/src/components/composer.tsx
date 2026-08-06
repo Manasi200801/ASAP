@@ -14,11 +14,13 @@ export function Composer({
   onSubmit,
   onFiles,
   disabled,
+  uploading,
   t,
 }: {
   onSubmit: (message?: string) => void;
   onFiles: (files: File[]) => void;
   disabled: boolean;
+  uploading: boolean;
   t: Translate;
 }) {
   const [value, setValue] = useState("");
@@ -44,12 +46,12 @@ export function Composer({
           dragging ? "border-brass bg-brass/[0.06]" : "border-line-strong"
         }`}
       >
-        <p className="text-[13px] text-ink-dim">{t("dropHint")}</p>
+        <p className="text-[13px] text-ink-dim">{uploading ? t("uploading") : t("dropHint")}</p>
         <input
           ref={input}
           type="file"
           multiple
-          accept="application/pdf"
+          accept="application/pdf,image/png,image/jpeg,image/gif,image/webp"
           className="hidden"
           onChange={(e) => onFiles(Array.from(e.target.files ?? []))}
         />

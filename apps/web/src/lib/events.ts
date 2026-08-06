@@ -163,3 +163,9 @@ export function deriveStatus(rules: RuleEvent[]): "pending" | "ready" | "blocked
   const evaluated = rules.filter((r) => r.status !== "skip").length;
   return evaluated >= RULE_COUNT ? "ready" : "pending";
 }
+
+/**
+ * Documents accepted per run. Enforced in the browser as a courtesy and again in
+ * `/api/upload`, which is the boundary that decides what gets a presigned URL.
+ */
+export const MAX_FILES = 10;

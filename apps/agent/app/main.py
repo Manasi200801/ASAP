@@ -81,6 +81,8 @@ class ChatRequest(BaseModel):
     keys: list[str] = []
     locale: str = "en"
     message: str | None = None
+    # Explicit request for the demo batch. Without it, "no files" means no files.
+    sample: bool = False
 
 
 class ApproveRequest(BaseModel):
@@ -112,7 +114,7 @@ async def chat(request: ChatRequest) -> StreamingResponse:
         type(judge).__name__,
     )
     run = store.create(request.runId, ACCOUNT, request.locale)
-    return stream(validate_run(run, request.keys, sap, judge))
+    return stream(validate_run(run, request.keys, sap, judge, sample=request.sample))
 
 
 @app.post("/approve")

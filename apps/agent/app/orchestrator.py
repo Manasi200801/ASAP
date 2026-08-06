@@ -171,7 +171,7 @@ async def _none() -> list[PurchaseOrder]:
 
 
 async def validate_run(
-    run: Run, keys: list[str], sap: Sap, judge: Judge
+    run: Run, keys: list[str], sap: Sap, judge: Judge, sample: bool = False
 ) -> AsyncIterator[ev.Event]:
     """Read-only. Extract, validate, summarise, then wait for a human."""
 
@@ -180,14 +180,32 @@ async def validate_run(
     await asyncio.sleep(BEAT)
 
     started = time.perf_counter()
-    run.invoices = await extract_batch(keys)
+    run.invoices, rejected = await extract_batch(keys, sample=sample)
     log.info(
-        "%s extracted %d invoices in %.1fs, references from %s",
+        "%s extracted %d invoices, rejected %d, in %.1fs",
         run.run_id,
         len(run.invoices),
+        len(rejected),
         time.perf_counter() - started,
-        run.reference_for(0),
     )
+
+    for document in rejected:
+        # Named individually. "2 documents were skipped" makes the person open
+        # every file to find out which; naming them ends the question.
+        yield ev.Text(delta=f"{document.file} — {document.reason} Nothing was checked for it.")
+        await asyncio.sleep(FLOOR_INVOICE)
+
+    if not run.invoices:
+        run.state = "failed"
+        yield ev.Error(
+            message=(
+                "No supplier invoices to check."
+                if rejected
+                else "No documents were received, so there is nothing to check."
+            ),
+            recoverable=True,
+        )
+        return
     for index, inv in enumerate(run.invoices):
         inv.reference = run.reference_for(index)
         inv.posting_date = POSTING_DATE

@@ -4,18 +4,24 @@ import { ApprovalCard } from "@/components/approval-card";
 import { BatchTable } from "@/components/batch-table";
 import { CallRail } from "@/components/call-rail";
 import { Composer } from "@/components/composer";
+import { MAX_FILES } from "@/lib/events";
 import { useLocale } from "@/lib/i18n";
 import { useRun } from "@/lib/use-run";
 import { useState } from "react";
 
 export default function Page() {
   const { locale, setLocale, t } = useLocale();
-  const { run, start, ask, approve, reset } = useRun();
+  const { run, start, upload, ask, approve, reset, fail } = useRun();
   const [files, setFiles] = useState<string[]>([]);
   const [slow, setSlow] = useState(false);
+  const [uploading, setUploading] = useState(false);
 
-  const busy = run.state === "extracting" || run.state === "validating" || run.state === "posting";
-  const started = run.state !== "idle";
+  const busy =
+    uploading ||
+    run.state === "extracting" ||
+    run.state === "validating" ||
+    run.state === "posting";
+  const started = run.state !== "idle" || uploading;
 
   // Counted from the rows as they settle, not from the closing `summary` event.
   // Reading the summary alone leaves the header on 0/0/0 for the whole run, which
@@ -35,20 +41,38 @@ export default function Page() {
     document.documentElement.style.setProperty("--m", next ? "4" : "1");
   }
 
-  async function begin(message?: string, names: string[] = []) {
+  async function begin(message?: string) {
     reset();
-    setFiles(names);
-    await start(locale, message);
+    setFiles([]);
+    // No documents means the demo batch, and it says so rather than relying on
+    // the agent to guess from an empty key list.
+    await start(locale, message, { sample: true });
   }
 
   async function onFiles(dropped: File[]) {
     if (dropped.length === 0) return;
+
+    if (dropped.length > MAX_FILES) {
+      reset();
+      fail(t("tooMany", { max: MAX_FILES }));
+      return;
+    }
+
+    const runId = `r_${Math.random().toString(36).slice(2, 8)}`;
+    reset();
     // Acknowledge receipt before any work begins - the chips appear immediately,
-    // separately from extraction, so the upload never looks like it was ignored.
-    await begin(
-      undefined,
-      dropped.map((f) => f.name),
-    );
+    // separately from the upload, so a dropped file never looks ignored.
+    setFiles(dropped.map((f) => f.name));
+    setUploading(true);
+
+    try {
+      const keys = await upload(runId, dropped);
+      setUploading(false);
+      await start(locale, undefined, { keys, runId });
+    } catch (error) {
+      setUploading(false);
+      fail(error instanceof Error ? error.message : t("uploadFailed"));
+    }
   }
 
   return (
@@ -167,11 +191,10 @@ export default function Page() {
           // starts a run - otherwise a question wipes the table it is asking
           // about and re-checks every invoice against SAP to answer nothing.
           // An empty submit still means "run this batch", even after a run exists.
-          onSubmit={(message) =>
-            run.runId && message ? ask(locale, message) : begin(message)
-          }
+          onSubmit={(message) => (run.runId && message ? ask(locale, message) : begin(message))}
           onFiles={onFiles}
           disabled={busy || run.answering}
+          uploading={uploading}
           t={t}
         />
       </section>

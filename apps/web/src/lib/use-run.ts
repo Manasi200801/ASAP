@@ -146,20 +146,70 @@ export function useRun() {
   }, []);
 
   const start = useCallback(
-    async (locale: "en" | "de", message?: string) => {
+    async (
+      locale: "en" | "de",
+      message?: string,
+      options: { keys?: string[]; sample?: boolean; runId?: string } = {},
+    ) => {
       const current = ++token.current;
-      const runId = `r_${Math.random().toString(36).slice(2, 8)}`;
+      const runId = options.runId ?? `r_${Math.random().toString(36).slice(2, 8)}`;
       setRun({ ...EMPTY, state: "extracting", runId });
 
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ runId, keys: [], locale, message }),
+        body: JSON.stringify({
+          runId,
+          keys: options.keys ?? [],
+          locale,
+          message,
+          // Explicit. The agent no longer treats "no keys" as "use the demo
+          // batch", so a failed upload reports itself instead of quietly
+          // producing six invoices nobody uploaded.
+          sample: options.sample ?? false,
+        }),
       });
       await consume(response, current);
     },
     [consume],
   );
+
+  const upload = useCallback(async (runId: string, files: File[]): Promise<string[]> => {
+    const response = await fetch("/api/upload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        runId,
+        files: files.map((f) => ({ name: f.name, size: f.size, type: f.type })),
+      }),
+    });
+
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.message ?? "The upload could not be prepared.");
+    }
+
+    const { uploads } = (await response.json()) as {
+      uploads: { name: string; key: string; url: string }[];
+    };
+
+    // Straight to S3, so the documents never pass through the web server and
+    // there is no request-body limit to hit.
+    await Promise.all(
+      uploads.map(async (target) => {
+        const file = files.find((f) => f.name === target.name);
+        if (!file) return;
+        const put = await fetch(target.url, {
+          method: "PUT",
+          headers: { "Content-Type": file.type || "application/octet-stream" },
+          body: file,
+        });
+        if (!put.ok) throw new Error(`${file.name} could not be uploaded.`);
+      }),
+    );
+
+    return uploads.map((u) => u.key);
+  }, []);
 
   const ask = useCallback(
     async (locale: "en" | "de", message: string) => {
@@ -203,10 +253,15 @@ export function useRun() {
     setRun((prev) => ({ ...prev, state: "done" }));
   }, [run.runId, run.readyIds, consume]);
 
+  /** Surface a client-side failure in the same place the agent's errors appear. */
+  const fail = useCallback((message: string) => {
+    setRun((prev) => ({ ...prev, state: "failed", error: message }));
+  }, []);
+
   const reset = useCallback(() => {
     token.current += 1;
     setRun(EMPTY);
   }, []);
 
-  return { run, start, ask, approve, reset };
+  return { run, start, upload, ask, approve, reset, fail };
 }

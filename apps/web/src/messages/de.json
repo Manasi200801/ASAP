@@ -7,7 +7,7 @@
   "railHead": "SAP · Live-Aufrufe",
   "you": "Sie",
   "agent": "Agent",
-  "dropHint": "Lieferantenrechnungen hier ablegen oder eine Frage stellen.",
+  "dropHint": "Rechnungen hier ablegen (PDF oder Bild) oder eine Frage stellen.",
   "loadBatch": "Beispielstapel laden",
   "seed1": "FPL-Stapel verarbeiten",
   "seed2": "Warum wurde FPL-9999 blockiert?",
@@ -37,5 +37,8 @@
   "sumAgent": "Vom Agent",
   "sumSaved": "Zeit gespart",
   "copyReport": "Laufbericht kopieren",
-  "decidedByAgent": "vom Agent entschieden"
+  "decidedByAgent": "vom Agent entschieden",
+  "uploading": "Dokumente werden hochgeladen…",
+  "tooMany": "Höchstens {max} Dokumente auf einmal.",
+  "uploadFailed": "Die Dokumente konnten nicht hochgeladen werden."
 }

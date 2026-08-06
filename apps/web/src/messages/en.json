@@ -7,7 +7,7 @@
   "railHead": "SAP · live calls",
   "you": "You",
   "agent": "Agent",
-  "dropHint": "Drop supplier invoices here, or ask a question.",
+  "dropHint": "Drop invoices here (PDF or image), or ask a question.",
   "loadBatch": "Load sample batch",
   "seed1": "Process the FPL batch",
   "seed2": "Why was FPL-9999 blocked?",
@@ -37,5 +37,8 @@
   "sumAgent": "By agent",
   "sumSaved": "Time saved",
   "copyReport": "Copy run report",
-  "decidedByAgent": "decided by agent"
+  "decidedByAgent": "decided by agent",
+  "uploading": "Uploading your documents…",
+  "tooMany": "Up to {max} documents at a time.",
+  "uploadFailed": "The documents could not be uploaded."
 }

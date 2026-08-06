@@ -24,6 +24,9 @@ DEFAULT_MODEL = "us.anthropic.claude-sonnet-4-6"
 # the orchestrator turns that into a blocked invoice with an honest message.
 RETRIES = 1
 
+# Anything not listed here is sent as a PDF document block.
+IMAGE_FORMATS = {"png": "png", "jpg": "jpeg", "jpeg": "jpeg", "gif": "gif", "webp": "webp"}
+
 
 class JudgementError(RuntimeError):
     """The model did not answer in a usable shape."""
@@ -110,16 +113,23 @@ def ask_json(system: str, prompt: str, document: bytes | None = None, name: str 
 
     content: list[dict] = []
     if document is not None:
-        content.append(
-            {
-                "document": {
-                    # Converse rejects most punctuation in document names.
-                    "name": re.sub(r"[^A-Za-z0-9 ]+", " ", name)[:60] or "invoice",
-                    "format": "pdf",
-                    "source": {"bytes": document},
+        # A photographed invoice is as ordinary as a PDF one, and Converse wants
+        # an image block for it rather than a document block.
+        suffix = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+        image_format = IMAGE_FORMATS.get(suffix)
+        if image_format:
+            content.append({"image": {"format": image_format, "source": {"bytes": document}}})
+        else:
+            content.append(
+                {
+                    "document": {
+                        # Converse rejects most punctuation in document names.
+                        "name": re.sub(r"[^A-Za-z0-9 ]+", " ", name)[:60] or "invoice",
+                        "format": "pdf",
+                        "source": {"bytes": document},
+                    }
                 }
-            }
-        )
+            )
     content.append({"text": prompt})
 
     last: Exception | None = None
