@@ -175,6 +175,11 @@ def test_the_agent_can_query_what_a_run_wrote() -> None:
     supplier = dispatch("search_invoices", {"query": "17401710"})
     assert supplier["count"] >= 4, supplier["count"]
 
+    # Asked for a full breakdown, the model sends a single space. LIKE '% %'
+    # matches only fields containing a space, which reads back as an empty batch.
+    assert dispatch("search_invoices", {"query": " "})["count"] == 6
+    assert dispatch("search_invoices", {})["count"] == 6
+
     blocked = dispatch("search_invoices", {"status": "blocked"})
     assert [row["invoice_id"] for row in blocked["invoices"]] == ["FPL-9999"]
 
@@ -202,6 +207,72 @@ def test_a_question_survives_the_process_that_ran_the_batch() -> None:
 
     detail = dispatch("invoice_detail", {"invoice": "FPL-9999", "run": "r_gone"})
     assert detail and detail["verdict"] == "blocked"
+
+
+def test_a_half_finished_turn_cannot_break_the_next_question() -> None:
+    """Stored history is not guaranteed to alternate, and Converse requires it.
+
+    An answer that failed mid-stream leaves a question with no reply. Sending
+    that back verbatim is a validation error from Bedrock, which surfaces as the
+    entire chat breaking rather than as one lost turn.
+    """
+    from app import db
+    from app.ask import conversation
+
+    db.add_message("s_broken", "user", "why was FPL-9999 blocked?")
+    db.add_message("s_broken", "user", "hello? the answer never arrived")
+    db.add_message("s_broken", "assistant", "sorry - the purchase order is missing.")
+
+    past = db.history("s_broken")
+    assert [turn["role"] for turn in past] == ["user", "user", "assistant"]
+
+    messages = conversation(past, "and the others?")
+    roles = [message["role"] for message in messages]
+    assert roles == ["user", "assistant", "user"], roles
+    assert "hello?" in messages[0]["content"][0]["text"], "a merged turn keeps both questions"
+
+    # History trimmed to a window can also begin on an answer, which Converse
+    # rejects just as firmly.
+    opening = conversation([{"role": "assistant", "text": "...continued"}], "hi")
+    assert [message["role"] for message in opening] == ["user"]
+
+
+def test_the_prompt_is_written_the_way_the_answer_must_read() -> None:
+    """Prompt style leaks into answer style, and this answer is rendered as raw text.
+
+    A markdown bullet in the prompt is how an asterisk ends up on a clerk's
+    screen. The language placeholder is checked here too: forgetting to
+    substitute it would ship the literal word to the model.
+    """
+    from app.ask import SYSTEM, TOOLS, answer  # noqa: F401
+
+    assert "**" not in SYSTEM and "##" not in SYSTEM, "no markdown emphasis or headings"
+    offenders = [
+        line for line in SYSTEM.splitlines() if line.lstrip().startswith(("- ", "* ", "#", "1. "))
+    ]
+    assert not offenders, offenders
+
+    assert "LANGUAGE" in SYSTEM, "the language placeholder must survive edits"
+    assert SYSTEM.replace("LANGUAGE", "German").count("LANGUAGE") == 0
+
+    # "By far the most important factor in tool performance" - and one-sentence
+    # descriptions are what the model had before.
+    for tool in TOOLS:
+        description = tool["toolSpec"]["description"]
+        assert description.count(". ") >= 3, tool["toolSpec"]["name"]
+
+
+def test_the_conversation_outlives_the_batch() -> None:
+    """History used to live on the Run, so a second batch wiped it mid-conversation."""
+    from app import db
+
+    db.add_message("s_keep", "user", "what is blocked?", run_id="r_one")
+    db.add_message("s_keep", "assistant", "FPL-9999.", run_id="r_one")
+    db.add_message("s_keep", "user", "and in this new batch?", run_id="r_two")
+
+    kept = db.history("s_keep")
+    assert len(kept) == 3, "a new run must not truncate the conversation"
+    assert db.history("s_other") == [], "sessions do not leak into each other"
 
 
 if __name__ == "__main__":

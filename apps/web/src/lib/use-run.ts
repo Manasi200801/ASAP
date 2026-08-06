@@ -151,9 +151,30 @@ function apply(run: Run, event: RunEvent): Run {
   }
 }
 
+/**
+ * One id per browser tab, kept across reloads.
+ *
+ * A run is a batch of invoices; a session is the person talking, and they keep
+ * talking after the batch on screen has been replaced. The agent stores the
+ * conversation under this, so "and the others?" still resolves after a reload or
+ * a second batch.
+ */
+function sessionId(): string {
+  if (typeof window === "undefined") return "default";
+  const existing = window.sessionStorage.getItem("strike-session");
+  if (existing) return existing;
+  const fresh = `s_${Math.random().toString(36).slice(2, 10)}`;
+  window.sessionStorage.setItem("strike-session", fresh);
+  return fresh;
+}
+
 export function useRun() {
   const [run, setRun] = useState<Run>(EMPTY);
   const token = useRef(0);
+  const session = useRef<string>("default");
+  if (typeof window !== "undefined" && session.current === "default") {
+    session.current = sessionId();
+  }
   // Content hashes seen this session, mapped to the file they arrived as.
   const seen = useRef(new Map<string, string>());
 
@@ -279,7 +300,13 @@ export function useRun() {
         const response = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ runId, keys: [], locale, message }),
+          body: JSON.stringify({
+            runId,
+            keys: [],
+            locale,
+            message,
+            sessionId: session.current,
+          }),
         });
         await consume(response, current);
       } finally {

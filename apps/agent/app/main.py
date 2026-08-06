@@ -117,6 +117,10 @@ class ChatRequest(BaseModel):
     message: str | None = None
     # Explicit request for the demo batch. Without it, "no files" means no files.
     sample: bool = False
+    # The conversation, which outlives any one batch. A run is a batch of
+    # invoices; a session is the person talking, and they keep talking after the
+    # batch on screen has been replaced.
+    sessionId: str = "default"
 
 
 class ApproveRequest(BaseModel):
@@ -134,14 +138,20 @@ async def chat(request: ChatRequest) -> StreamingResponse:
     validation, so asking "why was invoice 6 blocked?" re-checked all six against
     SAP and answered nothing.
     """
-    existing = store.get(request.runId)
     if request.message and not request.sample:
         # Always an answer, never a run. The agent's tools read the database, so
         # it can answer about a batch this process never held - and when there is
         # genuinely nothing there, it says so itself rather than falling through
         # and re-checking six invoices to answer a question about one.
-        log.info("chat %s answering: %r", request.runId, request.message[:80])
-        return stream(answer_run(existing, request.message, request.locale))
+        log.info("chat %s answering: %r", request.sessionId, request.message[:80])
+        return stream(
+            answer_run(
+                request.message,
+                request.locale,
+                session_id=request.sessionId,
+                run_id=request.runId if request.runId != "none" else None,
+            )
+        )
 
     log.info(
         "chat %s starting run: %d files, locale=%s, sap=%s, judge=%s",

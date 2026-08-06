@@ -226,6 +226,12 @@ async def stream_tools(
                 messages.append({"role": "assistant", "content": assistant})
                 messages.append({"role": "user", "content": results})
 
+                # The model often says "let me look that up" before calling a
+                # tool. Without this the answer to the lookup is welded onto the
+                # end of that sentence: "...details now.The supplier is 17401710".
+                if text.strip():
+                    emit("\n\n")
+
             log.warning("tool loop hit %d turns without a final answer", max_turns)
         except Exception as error:  # noqa: BLE001 - re-raised on the consumer side
             loop.call_soon_threadsafe(queue.put_nowait, error)

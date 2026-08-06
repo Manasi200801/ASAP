@@ -77,6 +77,17 @@ CREATE TABLE IF NOT EXISTS checks (
 
 CREATE INDEX IF NOT EXISTS invoices_supplier_invoice
     ON invoices (supplier_invoice_id);
+
+CREATE TABLE IF NOT EXISTS messages (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    run_id     TEXT,
+    role       TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+    text       TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS messages_session ON messages (session_id, id);
 """
 
 
@@ -194,6 +205,35 @@ def save_run(run: Any) -> None:
     log.info("%s saved: %d invoices", run.run_id, len(run.invoices))
 
 
+def add_message(session_id: str, role: str, text: str, run_id: str | None = None) -> None:
+    """Record one turn of conversation.
+
+    Chat history used to live on the Run object, which meant it died with the
+    process and was wiped by the next batch - so "and the others?" stopped
+    working the moment a second batch was loaded. A session outlives both.
+    """
+    with closing(connect()) as connection, connection:
+        connection.execute(
+            "INSERT INTO messages (session_id, run_id, role, text) VALUES (?, ?, ?, ?)",
+            (session_id, run_id, role, text),
+        )
+
+
+def history(session_id: str, turns: int = 12) -> list[dict]:
+    """The last `turns` messages of a session, oldest first.
+
+    Recent only. The tools are the source of truth and are available every turn;
+    older chat adds tokens without adding facts, and a long tail of it starts
+    competing with the tool results for the model's attention.
+    """
+    with closing(connect()) as connection:
+        rows = connection.execute(
+            "SELECT role, text FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT ?",
+            (session_id, max(0, turns)),
+        ).fetchall()
+    return [dict(row) for row in reversed(rows)]
+
+
 def latest_run_id() -> str | None:
     with closing(connect()) as connection:
         row = connection.execute(
@@ -233,6 +273,10 @@ def search_invoices(
         where.append("verdict = ?")
         values.append(status)
 
+    # A blank or whitespace-only term means "everything", not LIKE '% %' - which
+    # matches only fields that happen to contain a space, and reads to the model
+    # as an empty batch. Asked for a full breakdown, it sent exactly that.
+    query = (query or "").strip()
     if query:
         where.append(
             "(supplier_invoice_id LIKE ? OR invoice_id LIKE ? OR vendor LIKE ? "

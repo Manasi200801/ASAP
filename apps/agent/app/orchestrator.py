@@ -64,18 +64,14 @@ class Run:
     ready: list[str] = field(default_factory=list)
     blocked: list[str] = field(default_factory=list)
 
-    # What the checks decided, kept after the stream ends. A question typed once
-    # the batch has settled is answered from this record; without it the only way
-    # to answer anything is to validate all over again, which is what the first
-    # version did and why asking a question re-ran six invoices.
+    # What the checks decided, accumulated during the run and written to the
+    # database once it settles. Questions are answered from there, not from here:
+    # without a record of any kind, the only way to answer anything is to
+    # validate all over again, which is what the first version did and why asking
+    # a question re-ran six invoices.
     results: dict[str, list[RuleResult]] = field(default_factory=dict)
     headlines: dict[str, str] = field(default_factory=dict)
     sap_documents: dict[str, str] = field(default_factory=dict)
-
-    # Questions and answers, in order. Without it every question is the first
-    # question: "why was that one blocked?" has no idea which one, and "and the
-    # others?" is unanswerable. Scoped to the run, so a new batch starts clean.
-    conversation: list[tuple[str, str]] = field(default_factory=list)
 
     def reference_for(self, index: int) -> str:
         """`<account>-<n>`, capped at 16 characters by SAP.
@@ -490,24 +486,27 @@ async def post_run(run: Run, sap: Sap) -> AsyncIterator[ev.Event]:
 
 
 async def answer_run(
-    run: Run | None, message: str, locale: str = "en"
+    message: str,
+    locale: str = "en",
+    session_id: str = "default",
+    run_id: str | None = None,
 ) -> AsyncIterator[ev.Event]:
     """Answer a typed question. Read-only, and it touches no state machine.
 
-    The run is optional. Everything answerable lives in the database, so a
-    question survives a restart, a reload, and a batch being replaced on screen -
-    which is why there is no longer a "I no longer have that batch" reply. The
-    run is passed only to carry the conversation forward within a session.
+    No Run is needed. Everything answerable lives in the database - the invoices,
+    the checks, and now the conversation - so a question survives a restart, a
+    reload, and a batch being replaced on screen. That is why there is no longer
+    an "I no longer have that batch" reply to give.
     """
     from .ask import answer
 
-    # Only the recent turns. The tools are the source of truth and are available
-    # every turn; older chat adds tokens without adding facts.
-    history = run.conversation[-HISTORY_TURNS:] if run else None
+    # Read before writing, so the current question is not also in the history.
+    past = db.history(session_id, HISTORY_TURNS * 2)
+    db.add_message(session_id, "user", message, run_id)
 
     spoken: list[str] = []
     try:
-        async for delta in answer(message, locale, history):
+        async for delta in answer(message, locale, past):
             spoken.append(delta)
             yield ev.Text(delta=delta)
     except Exception as error:  # noqa: BLE001 - a failed answer must not fail the run
@@ -515,9 +514,8 @@ async def answer_run(
         yield ev.Text(delta=f"I could not answer that: {error}")
         return
 
-    if run is not None:
-        # Only a complete answer is remembered. Recording a half-streamed one
-        # would teach the next turn to refer back to something the user never
-        # finished reading.
-        run.conversation.append((message, "".join(spoken)))
-        log.info("%s answered in %d turns of history", run.run_id, len(run.conversation))
+    # Only a complete answer is remembered. Recording a half-streamed one would
+    # teach the next turn to refer back to something the user never finished
+    # reading.
+    db.add_message(session_id, "assistant", "".join(spoken), run_id)
+    log.info("%s answered from %d turns of history", session_id, len(past))
