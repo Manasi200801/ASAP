@@ -23,10 +23,10 @@ export function LocaleSwitch({
   const index = OPTIONS.indexOf(locale);
 
   return (
-    <div className="relative flex rounded-full border border-on-header/25 bg-on-header/10 p-0.5">
+    <div className="relative flex rounded-full border border-on-header/30 bg-on-header/10 p-0.5">
       <span
         aria-hidden="true"
-        className="absolute inset-y-0.5 left-0.5 w-9 rounded-full bg-primary shadow-sm transition-transform duration-200 [transition-timing-function:var(--ease-in-out)]"
+        className="absolute inset-y-0.5 left-0.5 w-11 rounded-full bg-primary transition-transform duration-200 [transition-timing-function:var(--ease-in-out)]"
         style={{ transform: `translateX(${index * 100}%)` }}
       />
       {OPTIONS.map((code) => (
@@ -35,10 +35,10 @@ export function LocaleSwitch({
           type="button"
           aria-pressed={locale === code}
           onClick={() => onChange(code)}
-          className={`pressable relative z-10 w-9 cursor-pointer rounded-full py-1.5 text-center font-semibold text-[13px] tracking-[0.04em] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-primary ${
+          className={`pressable relative z-10 min-h-[36px] w-11 cursor-pointer rounded-full text-center font-semibold text-[14px] tracking-[0.04em] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-on-header ${
             locale === code
               ? "text-on-primary"
-              : "text-on-header/70 hover:bg-on-header/15 hover:text-on-header"
+              : "text-on-header/80 hover:bg-on-header/20 hover:text-on-header"
           }`}
         >
           {code.toUpperCase()}

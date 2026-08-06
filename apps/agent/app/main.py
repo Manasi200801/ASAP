@@ -34,6 +34,38 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 
+def _repair_ca_bundle() -> None:
+    """Drop CA bundle paths that point at nothing.
+
+    Symptom on a teammate's machine:
+
+        SSL validation failed for https://bedrock-runtime.us-east-1.amazonaws.com/...
+        [Errno 2] No such file or directory
+
+    That errno is the tell. It is not a certificate that failed to verify - it is
+    a certificate file that does not exist. Anaconda, corporate proxy installers
+    and old virtualenvs all export these variables pointing into a prefix that
+    later moved, and every boto3 call then fails with an error that reads like a
+    network or trust problem.
+
+    botocore ships its own CA bundle and uses it when nothing overrides it, so
+    removing a dead override is the fix rather than a workaround.
+    """
+    for name in ("AWS_CA_BUNDLE", "REQUESTS_CA_BUNDLE", "SSL_CERT_FILE", "CURL_CA_BUNDLE"):
+        configured = os.environ.get(name)
+        if configured and not pathlib.Path(configured).is_file():
+            del os.environ[name]
+            logging.getLogger("app.http").warning(
+                "%s pointed at %s, which does not exist. Ignoring it and using the "
+                "certificates bundled with botocore.",
+                name,
+                configured,
+            )
+
+
+_repair_ca_bundle()
+
+from . import db  # noqa: E402
 from . import events as ev  # noqa: E402
 from .judge import build_judge  # noqa: E402
 from .orchestrator import RunStore, answer_run, post_run, validate_run  # noqa: E402
@@ -56,7 +88,9 @@ store = RunStore()
 sap = build_sap()
 judge = build_judge()
 
-log.info("backends: sap=%s judge=%s", type(sap).__name__, type(judge).__name__)
+db.init()
+
+log.info("backends: sap=%s judge=%s, db=%s", type(sap).__name__, type(judge).__name__, db.path())
 
 
 async def sse(events: AsyncIterator[ev.Event]) -> AsyncIterator[bytes]:
@@ -81,6 +115,12 @@ class ChatRequest(BaseModel):
     keys: list[str] = []
     locale: str = "en"
     message: str | None = None
+    # Explicit request for the demo batch. Without it, "no files" means no files.
+    sample: bool = False
+    # The conversation, which outlives any one batch. A run is a batch of
+    # invoices; a session is the person talking, and they keep talking after the
+    # batch on screen has been replaced.
+    sessionId: str = "default"
 
 
 class ApproveRequest(BaseModel):
@@ -102,10 +142,20 @@ async def chat(request: ChatRequest) -> StreamingResponse:
     validation, so asking "why was invoice 6 blocked?" re-checked all six against
     SAP and answered nothing.
     """
-    existing = store.get(request.runId)
-    if request.message and existing is not None and existing.invoices:
-        log.info("chat %s answering: %r", request.runId, request.message[:80])
-        return stream(answer_run(existing, request.message))
+    if request.message and not request.sample:
+        # Always an answer, never a run. The agent's tools read the database, so
+        # it can answer about a batch this process never held - and when there is
+        # genuinely nothing there, it says so itself rather than falling through
+        # and re-checking six invoices to answer a question about one.
+        log.info("chat %s answering: %r", request.sessionId, request.message[:80])
+        return stream(
+            answer_run(
+                request.message,
+                request.locale,
+                session_id=request.sessionId,
+                run_id=request.runId if request.runId != "none" else None,
+            )
+        )
 
     log.info(
         "chat %s starting run: %d files, locale=%s, sap=%s, judge=%s",
@@ -116,7 +166,7 @@ async def chat(request: ChatRequest) -> StreamingResponse:
         type(judge).__name__,
     )
     run = store.create(request.runId, ACCOUNT, request.locale)
-    return stream(validate_run(run, request.keys, sap, judge))
+    return stream(validate_run(run, request.keys, sap, judge, sample=request.sample))
 
 
 @app.post("/approve")

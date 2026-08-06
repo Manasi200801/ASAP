@@ -3,6 +3,7 @@
 import type { RunState } from "@/lib/events";
 import type { Translate } from "@/lib/i18n";
 import type { Message } from "@/lib/use-run";
+import { CheckIcon } from "./icons";
 
 const STATE_STAGE: Record<RunState, number> = {
   idle: -1,
@@ -45,29 +46,36 @@ export function LiveStatus({
   ];
 
   return (
-    <div className="flex flex-col gap-2.5">
-      <div className="font-semibold text-[12px] text-on-surface-faint uppercase tracking-[0.12em]">
+    <div className="flex flex-col gap-4">
+      <div className="font-semibold text-[13px] text-on-surface-variant uppercase tracking-[0.12em]">
         {t("liveStatus")}
       </div>
 
-      <div className="flex flex-col">
+      {/* An ordered list, because the order is the information: this is a
+          pipeline, and which stage the run has reached is the whole point. */}
+      <ol className="flex flex-col">
         {stages.map((stage, index) => {
           const isDone = index < activeIndex;
           const isActive = index === activeIndex;
 
           return (
-            <div key={stage.key} className="relative flex gap-3 pb-6 last:pb-0">
+            <li
+              key={stage.key}
+              aria-current={isActive ? "step" : undefined}
+              className="relative flex gap-3.5 pb-7 last:pb-0"
+            >
               {index < stages.length - 1 ? (
                 <span
                   aria-hidden="true"
-                  className={`absolute top-[18px] left-[8px] h-[calc(100%-10px)] w-px transition-colors duration-300 ${
+                  className={`absolute top-[22px] left-[9px] h-[calc(100%-14px)] w-0.5 rounded-full transition-colors duration-300 ${
                     isDone ? "bg-success" : "bg-outline-variant"
                   }`}
                 />
               ) : null}
 
               <span
-                className={`relative z-10 mt-0.5 flex h-[17px] w-[17px] flex-none items-center justify-center rounded-full border-2 transition-colors duration-300 ${
+                aria-hidden="true"
+                className={`relative z-10 mt-0.5 flex h-5 w-5 flex-none items-center justify-center rounded-full border-2 transition-colors duration-300 ${
                   isDone
                     ? "border-success bg-success text-on-success"
                     : isActive
@@ -75,34 +83,37 @@ export function LiveStatus({
                       : "border-outline-variant bg-surface"
                 }`}
               >
-                {isDone ? <span className="text-[9px]">✓</span> : null}
+                {isDone ? <CheckIcon className="h-3 w-3" /> : null}
                 {isActive ? (
-                  <span className="h-[7px] w-[7px] animate-pulse rounded-full bg-primary" />
+                  <span className="h-2 w-2 animate-pulse rounded-full bg-primary motion-reduce:animate-none" />
                 ) : null}
               </span>
 
-              <div>
+              <div className="min-w-0">
                 <div
-                  className={`text-[13px] leading-[18px] ${
+                  className={`text-[16px] leading-[22px] ${
                     isActive
-                      ? "font-medium text-on-surface"
+                      ? "font-semibold text-on-surface"
                       : isDone
-                        ? "text-on-surface"
+                        ? "font-medium text-on-surface"
                         : "text-on-surface-faint"
                   }`}
                 >
                   {stage.label}
                 </div>
                 {isActive && lastMessage ? (
-                  <p className="mt-1 max-w-[160px] text-[12px] text-on-surface-faint leading-4">
+                  <p
+                    aria-live="polite"
+                    className="mt-1.5 text-[14px] text-on-surface-variant leading-5"
+                  >
                     {lastMessage}
                   </p>
                 ) : null}
               </div>
-            </div>
+            </li>
           );
         })}
-      </div>
+      </ol>
     </div>
   );
 }

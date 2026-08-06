@@ -7,10 +7,20 @@ Or bare:   python apps/agent/tests/test_run.py
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import os
 import sys
+import tempfile
+from contextlib import closing
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+# A scratch database, before anything imports the app. Tests write real runs, and
+# they must not land in the file the demo answers questions from.
+_TEST_DB = Path(tempfile.gettempdir()) / "strike-ap-test.db"
+_TEST_DB.unlink(missing_ok=True)
+os.environ["AP_DB_PATH"] = str(_TEST_DB)
 
 from app import events as ev  # noqa: E402
 from app.extract import sample_batch  # noqa: E402
@@ -22,6 +32,24 @@ from app.sap import FakeSap  # noqa: E402
 
 async def collect(gen) -> list[ev.Event]:
     return [event async for event in gen]
+
+
+@contextlib.contextmanager
+def its_own_database():
+    """For a test that parks documents.
+
+    Parking is remembered forever, on purpose - so a test that parks the sample
+    batch makes every later run of it a real duplicate. That is the behaviour
+    working; it just cannot share a file with the tests that expect a clean slate.
+    """
+    previous = os.environ["AP_DB_PATH"]
+    scratch = Path(tempfile.gettempdir()) / "strike-ap-parked.db"
+    scratch.unlink(missing_ok=True)
+    os.environ["AP_DB_PATH"] = str(scratch)
+    try:
+        yield
+    finally:
+        os.environ["AP_DB_PATH"] = previous
 
 
 def test_every_rule_id_is_covered_exactly_once() -> None:
@@ -88,6 +116,15 @@ def test_reruns_do_not_collide_on_the_invoice_reference() -> None:
     assert not (firsts & seconds), "a second run must produce fresh references"
     assert all(len(r) <= 16 for r in firsts | seconds), "SAP caps the reference at 16 characters"
 
+    # A live park produced 516359819848-521 - already all sixteen characters. A
+    # sequence that simply grows reaches four digits within a few runs and SAP
+    # rejects the batch mid-demo. Seed at the top of the range and rehearse hard.
+    store._next_sequence = 890
+    for _ in range(40):
+        run = store.create(f"r_{_}", "516359819848", "en")
+        references = [run.reference_for(i) for i in range(10)]
+        assert all(len(r) <= 16 for r in references), references
+
 
 def test_park_payload_parks_and_never_posts() -> None:
     store = RunStore()
@@ -96,14 +133,318 @@ def test_park_payload_parks_and_never_posts() -> None:
     inv.reference = run.reference_for(0)
     inv.posting_date = POSTING_DATE
 
+    inv.gr_document, inv.gr_year, inv.gr_item = "5000002033", "2025", "1"
+
     payload = park_payload(inv, 0, run)
     assert payload["SupplierInvoiceStatus"] == "A", "status A parks; anything else posts for payment"
+
+    # SAP rejects the whole document without these wherever the order settles
+    # against goods receipts: "Fill in mandatory field 'ReferenceDocument,
+    # -FiscalYear, -Item'". Four of five invoices failed to park on exactly this.
+    line = payload["to_SuplrInvcItemPurOrdRef"][0]
+    assert line["ReferenceDocument"] == "5000002033", line
+    assert line["ReferenceDocumentFiscalYear"] == "2025", line
+    assert line["ReferenceDocumentItem"] == "1", line
+
+    # With no receipt in hand the fields are omitted rather than sent empty - an
+    # invoice with no goods receipt has to fail its own check, not the payload.
+    bare = sample_batch()[0]
+    bare.reference, bare.posting_date = run.reference_for(1), POSTING_DATE
+    assert "ReferenceDocument" not in park_payload(bare, 1, run)["to_SuplrInvcItemPurOrdRef"][0]
     # OData V2 epoch-millisecond form for 2025-03-15, the only open posting
     # period on the workshop system. A plain date string fails at write time.
     assert payload["PostingDate"] == "/Date(1741996800000)/", payload["PostingDate"]
     assert payload["DocumentDate"] == payload["PostingDate"]
     assert payload["TaxIsCalculatedAutomatically"] is True
     assert payload["to_SuplrInvcItemPurOrdRef"][0]["PurchaseOrder"] == inv.purchase_order
+
+
+def test_the_same_invoice_twice_in_one_batch_is_blocked() -> None:
+    """The duplicate SAP cannot catch.
+
+    Neither copy has been parked, and each row is given its own fresh reference,
+    so every check passes on both and the supplier is paid twice.
+    """
+    from app.orchestrator import mark_duplicates
+    from app.rules import not_duplicate
+
+    original, repeat = sample_batch()[0], sample_batch()[0]
+    # The same invoice forwarded twice arrives under a different file name, which
+    # is why identity is the supplier and their invoice number, not the file.
+    repeat.file = "forwarded-again.pdf"
+    batch = [original, repeat]
+
+    mark_duplicates(batch)
+
+    assert original.duplicate_of is None, "the first copy is not a duplicate of anything"
+    assert repeat.duplicate_of == original.file, "the repeat names the file it repeats"
+
+    assert not_duplicate(original, None, None).passed, "the original must still pass rule 16"
+    verdict = not_duplicate(repeat, None, None)
+    assert not verdict.passed, "the repeat must fail rule 16"
+    assert original.file in (verdict.detail or ""), "the reason must name the earlier file"
+
+
+def test_distinct_invoices_from_one_supplier_are_not_duplicates() -> None:
+    """Four of the demo invoices share a supplier. None of them repeat."""
+    from app.orchestrator import mark_duplicates
+
+    batch = sample_batch()
+    mark_duplicates(batch)
+    assert all(i.duplicate_of is None for i in batch), "distinct invoices must not be flagged"
+
+
+def test_the_agent_can_query_what_a_run_wrote() -> None:
+    """The chat answers from the database, through exactly these three tools.
+
+    Nothing about the batch is put in the prompt, so if these queries are wrong
+    the assistant is not wrong in an interesting way - it is blind.
+    """
+    from decimal import Decimal
+
+    from app.ask import dispatch
+
+    store, sap, judge = RunStore(), FakeSap(), FakeJudge()
+    run = store.create("r_tools", "516359819848", "en")
+    asyncio.run(collect(validate_run(run, [], sap, judge)))
+
+    detail = dispatch("invoice_detail", {"invoice": "FPL-9999"})
+    assert detail["verdict"] == "blocked", detail
+    assert detail["headline"], "the reason a person reads must survive to the database"
+    assert any(not check["passed"] for check in detail["checks"]), "the failing check must be there"
+    assert any(check["decided_by"] == "agent" for check in detail["checks"]), "provenance too"
+
+    missing = dispatch("invoice_detail", {"invoice": "FPL-0000"})
+    assert missing.get("found") is False, "an unknown invoice is answerable, not an error"
+
+    supplier = dispatch("search_invoices", {"query": "17401710"})
+    assert supplier["count"] >= 4, supplier["count"]
+
+    # Asked for a full breakdown, the model sends a single space. LIKE '% %'
+    # matches only fields containing a space, which reads back as an empty batch.
+    assert dispatch("search_invoices", {"query": " "})["count"] == 6
+    assert dispatch("search_invoices", {})["count"] == 6
+
+    blocked = dispatch("search_invoices", {"status": "blocked"})
+    assert [row["invoice_id"] for row in blocked["invoices"]] == ["FPL-9999"]
+
+    # The arithmetic the model got wrong on its own: 454.00 for a batch of 513.50.
+    totals = dispatch("batch_totals", {"status": "ready"})
+    expected = sum(Decimal(i.gross_amount) for i in run.invoices if i.invoice_id in run.ready)
+    assert Decimal(totals["gross_total"]) == expected, totals
+    assert totals["ready"] == 5 and totals["blocked"] == 0, totals
+
+    # Parking moves an invoice out of "ready" entirely. Answering "ready" for a
+    # document that already exists in SAP invites approving it a second time.
+    asyncio.run(collect(post_run(run, sap)))
+    after = dispatch("invoice_detail", {"invoice": "FPL-1563"})
+    assert after["verdict"] == "parked", after["verdict"]
+    assert after["sap_document"], "and it must carry the document number"
+    assert dispatch("batch_totals", {})["ready"] == 0, "nothing is still awaiting approval"
+    assert dispatch("batch_totals", {})["parked"] == 5
+
+
+def test_a_question_survives_the_process_that_ran_the_batch() -> None:
+    """The store is in memory; the answers are not.
+
+    A reload used to be answered with "I no longer have that batch", which is a
+    demo ending itself.
+    """
+    from app.ask import dispatch
+
+    store, sap, judge = RunStore(), FakeSap(), FakeJudge()
+    run = store.create("r_gone", "516359819848", "en")
+    asyncio.run(collect(validate_run(run, [], sap, judge)))
+
+    restarted = RunStore()  # everything the old process held is gone
+    assert restarted.get("r_gone") is None
+
+    detail = dispatch("invoice_detail", {"invoice": "FPL-9999", "run": "r_gone"})
+    assert detail and detail["verdict"] == "blocked"
+
+
+def test_a_half_finished_turn_cannot_break_the_next_question() -> None:
+    """Stored history is not guaranteed to alternate, and Converse requires it.
+
+    An answer that failed mid-stream leaves a question with no reply. Sending
+    that back verbatim is a validation error from Bedrock, which surfaces as the
+    entire chat breaking rather than as one lost turn.
+    """
+    from app import db
+    from app.ask import conversation
+
+    db.add_message("s_broken", "user", "why was FPL-9999 blocked?")
+    db.add_message("s_broken", "user", "hello? the answer never arrived")
+    db.add_message("s_broken", "assistant", "sorry - the purchase order is missing.")
+
+    past = db.history("s_broken")
+    assert [turn["role"] for turn in past] == ["user", "user", "assistant"]
+
+    messages = conversation(past, "and the others?")
+    roles = [message["role"] for message in messages]
+    assert roles == ["user", "assistant", "user"], roles
+    assert "hello?" in messages[0]["content"][0]["text"], "a merged turn keeps both questions"
+
+    # History trimmed to a window can also begin on an answer, which Converse
+    # rejects just as firmly.
+    opening = conversation([{"role": "assistant", "text": "...continued"}], "hi")
+    assert [message["role"] for message in opening] == ["user"]
+
+
+def test_an_invoice_parked_last_week_cannot_be_parked_again() -> None:
+    """The duplicate that costs real money, and the one nothing else catches.
+
+    Rule 16's SAP lookup asks whether OUR reference exists, and that is minted
+    fresh every run so rehearsals do not collide - so it can only ever catch the
+    sequence colliding with itself. The same supplier invoice arriving next week,
+    under a new file name, sailed through all sixteen checks and paid twice.
+    """
+    with its_own_database():
+        sap, judge = FakeSap(), FakeJudge()
+        store = RunStore()
+
+        # Not sample=True: the demo batch is fixture data and is deliberately
+        # exempt, so a rehearsal cannot block the live demo an hour later. These
+        # stand in for documents somebody uploaded.
+        first = store.create("r_week1", "516359819848", "en")
+        asyncio.run(collect(validate_run(first, [], sap, judge)))
+        asyncio.run(collect(post_run(first, sap)))
+        assert first.sap_documents, "the first run must actually park something"
+
+        # Same invoices, a new run, fresh references - which is exactly what used
+        # to make this sail through all sixteen checks.
+        second = store.create("r_week2", "516359819848", "en")
+        events = asyncio.run(collect(validate_run(second, [], sap, judge)))
+
+        approval = next(e for e in events if isinstance(e, ev.Approval))
+        parked = list(first.sap_documents)
+        assert all(i in approval.blockedIds for i in parked), approval.blockedIds
+        assert not any(i in approval.readyIds for i in parked), "nothing parked may park again"
+
+        repeat = next(
+            e for e in events if isinstance(e, ev.Rule) and e.ruleId == 16 and e.status == "fail"
+        )
+        document = first.sap_documents[repeat.invoiceId]
+        assert document in (repeat.detail or ""), "the reason must name the document it repeats"
+
+
+def test_a_database_from_before_a_column_existed_still_opens() -> None:
+    """Schema changes must not require anyone to delete their data.
+
+    CREATE TABLE IF NOT EXISTS leaves an existing table exactly as it was, so a
+    file created before a column was added kept the old shape and every query
+    naming that column failed with "no such column" - on a machine whose only
+    mistake was having run the project before.
+    """
+    import sqlite3
+
+    from app import db
+
+    previous = os.environ["AP_DB_PATH"]
+    old = Path(tempfile.gettempdir()) / "strike-ap-old-shape.db"
+    old.unlink(missing_ok=True)
+
+    # The runs table as it was before `sample` was added.
+    with sqlite3.connect(old) as raw:
+        raw.execute(
+            "CREATE TABLE runs (run_id TEXT PRIMARY KEY, account TEXT NOT NULL, "
+            "locale TEXT NOT NULL, state TEXT NOT NULL, "
+            "created_at TEXT NOT NULL DEFAULT (datetime('now')))"
+        )
+        raw.execute("INSERT INTO runs (run_id, account, locale, state) VALUES ('r_old','a','en','done')")
+
+    os.environ["AP_DB_PATH"] = str(old)
+    try:
+        # The query that used to fail outright.
+        assert db.parked_before("17401710", "FPL-1563", "r_new") is None
+        with closing(db.connect()) as connection:
+            columns = {row["name"] for row in connection.execute("PRAGMA table_info(runs)")}
+            assert "sample" in columns, columns
+            kept = connection.execute("SELECT run_id, sample FROM runs").fetchone()
+            assert kept["run_id"] == "r_old", "existing rows survive the migration"
+            assert kept["sample"] == 0, "and default to not being demo data"
+    finally:
+        os.environ["AP_DB_PATH"] = previous
+
+
+def test_rehearsing_the_demo_cannot_block_the_demo() -> None:
+    """The sample batch is fixture data, and must not arm the duplicate check.
+
+    Parking it once at midnight would otherwise block every invoice in it at two
+    the following afternoon - a control that protects nothing, failing at the
+    only moment anyone is watching.
+    """
+    with its_own_database():
+        sap, judge = FakeSap(), FakeJudge()
+        store = RunStore()
+
+        rehearsal = store.create("r_rehearsal", "516359819848", "en")
+        asyncio.run(collect(validate_run(rehearsal, [], sap, judge, sample=True)))
+        asyncio.run(collect(post_run(rehearsal, sap)))
+        assert rehearsal.sap_documents, "the rehearsal must really have parked"
+
+        # Fresh SAP, as a new day would be: only our own database remembers.
+        demo = store.create("r_demo", "516359819848", "en")
+        events = asyncio.run(collect(validate_run(demo, [], FakeSap(), judge, sample=True)))
+
+        approval = next(e for e in events if isinstance(e, ev.Approval))
+        assert len(approval.readyIds) == 5, approval.readyIds
+        assert approval.blockedIds == ["FPL-9999"], approval.blockedIds
+
+
+def test_the_reference_tool_says_nothing_rather_than_guessing() -> None:
+    """No knowledge base configured must not become an answer from memory.
+
+    A teammate without the env var should get an agent that says it cannot look
+    the field up - not one that invents SAP semantics confidently.
+    """
+    from app.ask import dispatch
+
+    configured = os.environ.pop("SAP_API_KNOWLEDGE_BASE_ID", None)
+    try:
+        empty = dispatch("sap_reference", {"query": "GR-based invoice verification"})
+        assert empty["count"] == 0 and empty["passages"] == []
+    finally:
+        if configured is not None:
+            os.environ["SAP_API_KNOWLEDGE_BASE_ID"] = configured
+
+
+def test_the_prompt_is_written_the_way_the_answer_must_read() -> None:
+    """Prompt style leaks into answer style, and this answer is rendered as raw text.
+
+    A markdown bullet in the prompt is how an asterisk ends up on a clerk's
+    screen. The language placeholder is checked here too: forgetting to
+    substitute it would ship the literal word to the model.
+    """
+    from app.ask import SYSTEM, TOOLS, answer  # noqa: F401
+
+    assert "**" not in SYSTEM and "##" not in SYSTEM, "no markdown emphasis or headings"
+    offenders = [
+        line for line in SYSTEM.splitlines() if line.lstrip().startswith(("- ", "* ", "#", "1. "))
+    ]
+    assert not offenders, offenders
+
+    assert "LANGUAGE" in SYSTEM, "the language placeholder must survive edits"
+    assert SYSTEM.replace("LANGUAGE", "German").count("LANGUAGE") == 0
+
+    # "By far the most important factor in tool performance" - and one-sentence
+    # descriptions are what the model had before.
+    for tool in TOOLS:
+        description = tool["toolSpec"]["description"]
+        assert description.count(". ") >= 3, tool["toolSpec"]["name"]
+
+
+def test_the_conversation_outlives_the_batch() -> None:
+    """History used to live on the Run, so a second batch wiped it mid-conversation."""
+    from app import db
+
+    db.add_message("s_keep", "user", "what is blocked?", run_id="r_one")
+    db.add_message("s_keep", "assistant", "FPL-9999.", run_id="r_one")
+    db.add_message("s_keep", "user", "and in this new batch?", run_id="r_two")
+
+    kept = db.history("s_keep")
+    assert len(kept) == 3, "a new run must not truncate the conversation"
+    assert db.history("s_other") == [], "sessions do not leak into each other"
 
 
 if __name__ == "__main__":

@@ -21,12 +21,13 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import AsyncIterator, Literal
 
+from . import db
 from . import events as ev
 from .extract import extract_batch
 from .judge import Judge
 from .rules import AGENT_RULE_IDS, RULE_COUNT, RuleResult, run_deterministic
 from .sap import Sap
-from .types import Extracted
+from .types import Extracted, GoodsReceipt, PurchaseOrder
 
 log = logging.getLogger("app.run")
 
@@ -42,6 +43,11 @@ MINUTES_PER_INVOICE_SAVED = 17
 # Question-and-answer pairs carried into the next question.
 HISTORY_TURNS = 6
 
+# Invoices whose network work runs at once. A demo batch is six, so six starts
+# them all; the cap exists so a larger batch cannot fire dozens of concurrent
+# Converse calls and start collecting throttling errors.
+PREPARE_CONCURRENCY = 6
+
 State = Literal[
     "uploaded", "extracting", "validating", "awaiting-approval", "posting", "done", "failed"
 ]
@@ -54,6 +60,9 @@ class Run:
     locale: str = "en"
     state: State = "uploaded"
     sequence_base: int = 1
+    # The demo batch rather than uploaded documents. Kept out of the duplicate
+    # check, which exists to protect real payments.
+    sample: bool = False
     invoices: list[Extracted] = field(default_factory=list)
     ready: list[str] = field(default_factory=list)
     blocked: list[str] = field(default_factory=list)
@@ -64,17 +73,14 @@ class Run:
     # or close the run before every ready invoice has landed in SAP.
     parked: list[str] = field(default_factory=list)
 
-    # What the checks decided, kept after the stream ends. A question typed once
-    # the batch has settled is answered from this record; without it the only way
-    # to answer anything is to validate all over again, which is what the first
-    # version did and why asking a question re-ran six invoices.
+    # What the checks decided, accumulated during the run and written to the
+    # database once it settles. Questions are answered from there, not from here:
+    # without a record of any kind, the only way to answer anything is to
+    # validate all over again, which is what the first version did and why asking
+    # a question re-ran six invoices.
     results: dict[str, list[RuleResult]] = field(default_factory=dict)
     headlines: dict[str, str] = field(default_factory=dict)
-
-    # Questions and answers, in order. Without it every question is the first
-    # question: "why was that one blocked?" has no idea which one, and "and the
-    # others?" is unanswerable. Scoped to the run, so a new batch starts clean.
-    conversation: list[tuple[str, str]] = field(default_factory=list)
+    sap_documents: dict[str, str] = field(default_factory=dict)
 
     def reference_for(self, index: int) -> str:
         """`<account>-<n>`, capped at 16 characters by SAP.
@@ -95,18 +101,26 @@ class RunStore:
     clock means a restart cannot collide with an earlier session.
 
     The reference is `<12-digit account>-<n>` and SAP caps it at 16 characters,
-    so n has three digits to work with.
+    so n has exactly three digits to work with - `516359819848-521` is already
+    all sixteen. The sequence therefore wraps rather than growing: seeded at 880,
+    a third run of the session would otherwise ask SAP to accept a 17-character
+    reference and be rejected mid-demo for a reason that looks like nothing the
+    operator did.
     """
+
+    # Three digits, and a batch consumes one per invoice from its base.
+    SEQUENCE_CEILING = 899
+    SEQUENCE_STRIDE = 50
 
     def __init__(self) -> None:
         self._runs: dict[str, Run] = {}
-        self._next_sequence = int(time.time()) % 900 + 1
+        self._next_sequence = int(time.time()) % self.SEQUENCE_CEILING + 1
 
     def create(self, run_id: str, account: str, locale: str) -> Run:
         # Advance past whatever the previous run consumed, so re-runs never
-        # collide on the invoice reference.
+        # collide on the invoice reference, and wrap to stay inside three digits.
         run = Run(run_id=run_id, account=account, locale=locale, sequence_base=self._next_sequence)
-        self._next_sequence += 50
+        self._next_sequence = (self._next_sequence + self.SEQUENCE_STRIDE - 1) % self.SEQUENCE_CEILING + 1
         self._runs[run_id] = run
         return run
 
@@ -129,29 +143,142 @@ def _rule_event(run: Run, inv: Extracted, result: RuleResult) -> ev.Rule:
     )
 
 
+def mark_duplicates(invoices: list[Extracted]) -> None:
+    """Flag any invoice already billed by an earlier file in the same batch.
+
+    This is the duplicate SAP cannot catch. Neither copy has been parked yet, and
+    the orchestrator gives every row its own fresh reference, so all sixteen
+    checks pass on both and the supplier is paid twice.
+
+    Identity is the supplier and their invoice number, not the file name - the
+    same invoice forwarded twice arrives under two different names, which is
+    exactly the case worth catching. A document with no invoice number cannot be
+    compared, so it is left alone rather than guessed at.
+    """
+    seen: dict[tuple[str, str], str] = {}
+    for inv in invoices:
+        if not inv.supplier_invoice_id:
+            continue
+        identity = (inv.vendor, inv.supplier_invoice_id)
+        if identity in seen:
+            inv.duplicate_of = seen[identity]
+        else:
+            seen[identity] = inv.file
+
+
+async def _prepare(
+    inv: Extracted, sap: Sap, judge: Judge, gate: asyncio.Semaphore
+) -> tuple[
+    PurchaseOrder | None, GoodsReceipt | None, dict[int, RuleResult], list[PurchaseOrder]
+]:
+    """Everything for one invoice that needs the network, fetched concurrently.
+
+    The semaphore is not politeness: six invoices at three model calls each is
+    eighteen concurrent Converse requests, which is where a workshop account
+    starts returning throttling errors.
+    """
+    async with gate:
+        # Independent of each other, both round trips to SAP.
+        po, inv.existing_reference = await asyncio.gather(
+            sap.purchase_order(inv.purchase_order, inv.purchase_order_item),
+            sap.reference_exists(inv.vendor, inv.reference),
+        )
+        # This one does depend on the order existing, so it waits.
+        gr = await sap.goods_receipt(inv.purchase_order, inv.purchase_order_item) if po else None
+
+        # One call for rules 4, 7 and 9 rather than three. They share the same
+        # facts, and three requests per invoice was the batch's main contention.
+        #
+        # A missing order is knowable now, so the replacement search runs here
+        # too, alongside everything else. Left where it used to be - after the
+        # invoice had already failed - it ran on its own at the end of the batch
+        # and added half a minute to the one row the audience is watching.
+        judged, alternatives = await asyncio.gather(
+            judge.judge_all(inv, po),
+            sap.open_orders_for(inv.vendor, inv.material) if po is None else _none(),
+        )
+        supplier, material, price = judged
+
+    results = {**run_deterministic(inv, po, gr), 4: supplier, 7: material, 9: price}
+    return po, gr, results, alternatives
+
+
+async def _none() -> list[PurchaseOrder]:
+    """A resolved empty result, so the gather above stays one expression."""
+    return []
+
+
 async def validate_run(
-    run: Run, keys: list[str], sap: Sap, judge: Judge
+    run: Run, keys: list[str], sap: Sap, judge: Judge, sample: bool = False
 ) -> AsyncIterator[ev.Event]:
     """Read-only. Extract, validate, summarise, then wait for a human."""
 
+    # Recorded on the run so the database can tell fixture data from documents a
+    # person actually uploaded. See `db.parked_before`.
+    run.sample = sample
     run.state = "extracting"
     yield ev.Text(delta="Files received. Reading them now.")
     await asyncio.sleep(BEAT)
 
     started = time.perf_counter()
-    run.invoices = await extract_batch(keys)
+    run.invoices, rejected = await extract_batch(keys, sample=sample)
     log.info(
-        "%s extracted %d invoices in %.1fs, references from %s",
+        "%s extracted %d invoices, rejected %d, in %.1fs",
         run.run_id,
         len(run.invoices),
+        len(rejected),
         time.perf_counter() - started,
-        run.reference_for(0),
     )
-    yield ev.Batch(runId=run.run_id, reference=run.reference_for(0), count=len(run.invoices))
+
+    for document in rejected:
+        # Named individually. "2 documents were skipped" makes the person open
+        # every file to find out which; naming them ends the question.
+        yield ev.Text(delta=f"{document.file} — {document.reason} Nothing was checked for it.")
+        await asyncio.sleep(FLOOR_INVOICE)
+
+    if not run.invoices:
+        run.state = "failed"
+        yield ev.Error(
+            message=(
+                "No supplier invoices to check."
+                if rejected
+                else "No documents were received, so there is nothing to check."
+            ),
+            recoverable=True,
+        )
+        return
+    mark_duplicates(run.invoices)
 
     for index, inv in enumerate(run.invoices):
         inv.reference = run.reference_for(index)
         inv.posting_date = POSTING_DATE
+        # A local read, so it costs nothing worth scheduling around: has this
+        # supplier's invoice number already been parked on an earlier run?
+        earlier = db.parked_before(inv.vendor, inv.supplier_invoice_id, run.run_id)
+        inv.already_parked = earlier["sap_document"] if earlier else None
+        if earlier:
+            log.info(
+                "%s %s was parked before as SAP document %s (run %s, file %s)",
+                run.run_id,
+                inv.invoice_id,
+                earlier["sap_document"],
+                earlier["run_id"],
+                earlier["file"],
+            )
+
+    # Started before the invoice rows are even announced. Those rows take a
+    # second of deliberate pacing to appear, and that second is free network
+    # time. References have to be assigned first, because the duplicate check
+    # reads them.
+    gate = asyncio.Semaphore(PREPARE_CONCURRENCY)
+    prepared = {
+        inv.invoice_id: asyncio.create_task(_prepare(inv, sap, judge, gate))
+        for inv in run.invoices
+    }
+
+    yield ev.Batch(runId=run.run_id, reference=run.reference_for(0), count=len(run.invoices))
+
+    for inv in run.invoices:
         yield ev.Invoice(
             invoiceId=inv.invoice_id,
             file=inv.file,
@@ -189,18 +316,14 @@ async def validate_run(
             resource=f"A_PurchaseOrder('{inv.purchase_order}')",
             status="ok",
         )
-        po = await sap.purchase_order(inv.purchase_order, inv.purchase_order_item)
-        gr = await sap.goods_receipt(inv.purchase_order, inv.purchase_order_item) if po else None
-        inv.existing_reference = await sap.reference_exists(inv.vendor, inv.reference)
-
-        deterministic = run_deterministic(inv, po, gr)
-        judged = {
-            4: await judge.supplier_matches(inv, po),
-            7: await judge.material_matches(inv, po),
-            9: await judge.price_within_policy(inv, po),
-        }
-        results = {**deterministic, **judged}
+        po, gr, results, alternatives = await prepared[inv.invoice_id]
         run.results[inv.invoice_id] = [results[rule_id] for rule_id in sorted(results)]
+
+        # Kept for the park payload. Under GR-based invoice verification SAP
+        # rejects an item that does not point back at the receipt it settles, and
+        # this is the only moment the receipt is in hand.
+        if gr is not None:
+            inv.gr_document, inv.gr_year, inv.gr_item = gr.document, gr.year, gr.item
 
         failures: list[RuleResult] = []
         stopped = False
@@ -256,7 +379,8 @@ async def validate_run(
                     resource=f"A_PurchaseOrder?$filter=Supplier eq '{inv.vendor}'",
                     status="ok",
                 )
-                alternatives = await sap.open_orders_for(inv.vendor, inv.material)
+                # Already fetched during preparation, alongside this invoice's
+                # other network work.
                 if alternatives:
                     alt = alternatives[0]
                     suggestion = ev.Suggestion(
@@ -297,6 +421,10 @@ async def validate_run(
     await asyncio.sleep(BEAT * 0.7)
 
     run.state = "awaiting-approval"
+    # On disk before the run is handed to a human. Everything the chat can answer
+    # comes from here, so a question survives a reload, a restart, and the next
+    # batch replacing this one on screen.
+    db.save_run(run)
     yield ev.Approval(runId=run.run_id, readyIds=run.ready, blockedIds=run.blocked)
 
 
@@ -313,6 +441,22 @@ def odata_date(day: str) -> str:
 def park_payload(inv: Extracted, index: int, run: Run) -> dict:
     """The deep insert Lab 06 specifies. Status A parks; it never posts for payment."""
     posting = odata_date(inv.posting_date)
+
+    # Where the purchase order settles against goods receipts, SAP requires the
+    # item to name the receipt it is paying for, and rejects the whole document
+    # otherwise: "Fill in mandatory field 'ReferenceDocument, -FiscalYear,
+    # -Item'". Sent only when we actually have a receipt - an invoice with none
+    # must fail on rule 12 rather than on a half-filled payload.
+    receipt = (
+        {
+            "ReferenceDocument": inv.gr_document,
+            "ReferenceDocumentFiscalYear": inv.gr_year,
+            "ReferenceDocumentItem": inv.gr_item,
+        }
+        if inv.gr_document and inv.gr_year and inv.gr_item
+        else {}
+    )
+
     return {
         "CompanyCode": inv.company_code,
         "DocumentDate": posting,
@@ -333,6 +477,7 @@ def park_payload(inv: Extracted, index: int, run: Run) -> dict:
                 "SupplierInvoiceItemAmount": inv.net_amount,
                 "QuantityInPurchaseOrderUnit": inv.quantity,
                 "PurchaseOrderQuantityUnit": inv.unit,
+                **receipt,
             }
         ],
     }
@@ -388,6 +533,7 @@ async def post_run(run: Run, sap: Sap, ids: list[str] | None = None) -> AsyncIte
             inv.reference,
         )
         run.parked.append(inv.invoice_id)
+        run.sap_documents[inv.invoice_id] = parked.sap_document
         yield ev.Posting(
             invoiceId=inv.invoice_id,
             status="parked",
@@ -397,10 +543,16 @@ async def post_run(run: Run, sap: Sap, ids: list[str] | None = None) -> AsyncIte
         )
         await asyncio.sleep(FLOOR_POSTING)
 
+    # Written after every approve call, not only the last one. A row parked by
+    # its own button is in SAP whether or not the other four ever follow, and the
+    # chat has to be able to say so.
+    db.save_run(run)
+
     # Only the last invoice's approval closes the run - one row parked out of
     # five must leave the other four still awaiting their own approve calls.
     if len(run.parked) >= len(run.ready):
         run.state = "done"
+        db.save_run(run)  # once more, to record the closing state
         yield ev.Text(
             delta=(
                 f"{len(run.parked)} parked documents in SAP, fiscal year 2025. "
@@ -411,144 +563,37 @@ async def post_run(run: Run, sap: Sap, ids: list[str] | None = None) -> AsyncIte
         run.state = "awaiting-approval"
 
 
-ANSWER_SYSTEM = """You are the accounts payable assistant for a batch of supplier
-invoices that has already been checked against SAP S/4HANA.
+async def answer_run(
+    message: str,
+    locale: str = "en",
+    session_id: str = "default",
+    run_id: str | None = None,
+) -> AsyncIterator[ev.Event]:
+    """Answer a typed question. Read-only, and it touches no state machine.
 
-Answer the user's question using only the run record you are given. The record is
-the complete result of the checks; it is not a summary you should second-guess.
-
-Rules:
-- Answer in plain business language. The reader approves invoices; they do not
-  know SAP field names or rule numbers, so translate rather than quote.
-- Be specific. Name invoices, amounts and suppliers from the record.
-- Amounts are in the currency stated in the record. Never convert them.
-- Totals are given to you already calculated. Quote them. Never add figures up
-  yourself and never present a sum the record does not state.
-- Plain text only. No markdown, no asterisks - the answer is rendered as-is.
-- If the record does not contain the answer, say so plainly and say what would.
-- Never suggest you can post, park, reverse or change anything. You can only
-  explain. Posting happens when the user presses Approve, never because of
-  something said in conversation.
-- Two or three sentences unless the question genuinely needs more. No headings,
-  no bullet lists.
-- A question may refer back to what was already discussed - "that one", "the
-  others", "why not". Resolve it against the earlier turns you are given, and
-  do not make the user repeat themselves.
-"""
-
-
-def _totals(run: Run) -> str:
-    """Sums, computed here rather than left to the model.
-
-    Asked for a batch total, a model will happily add the figures itself and get
-    it wrong - an early version answered 454.00 for invoices totalling 513.50.
-    Money arithmetic is not a judgement call, so it is done in Python and handed
-    over as a fact.
+    No Run is needed. Everything answerable lives in the database - the invoices,
+    the checks, and now the conversation - so a question survives a restart, a
+    reload, and a batch being replaced on screen. That is why there is no longer
+    an "I no longer have that batch" reply to give.
     """
-    from decimal import Decimal, InvalidOperation
+    from .ask import answer
 
-    def total(invoice_ids: list[str]) -> str:
-        amount = Decimal(0)
-        for inv in run.invoices:
-            if inv.invoice_id not in invoice_ids:
-                continue
-            try:
-                amount += Decimal(inv.gross_amount)
-            except InvalidOperation:  # an unparsable amount must not fake a total
-                return "not calculable"
-        return f"{amount:.2f}"
-
-    currencies = {inv.currency for inv in run.invoices} or {"EUR"}
-    currency = currencies.pop() if len(currencies) == 1 else "mixed currencies"
-    return (
-        f"Gross total ready to approve: {total(run.ready)} {currency}. "
-        f"Gross total blocked: {total(run.blocked)} {currency}."
-    )
-
-
-def _run_record(run: Run) -> str:
-    """The batch as text, for a question to be answered against."""
-    lines = [
-        f"Run {run.run_id}. State: {run.state}. "
-        f"{len(run.ready)} ready, {len(run.blocked)} blocked, "
-        f"{len(run.invoices)} invoices total.",
-        _totals(run),
-        "",
-    ]
-
-    for inv in run.invoices:
-        verdict = "blocked" if inv.invoice_id in run.blocked else "ready"
-        lines.append(
-            f"{inv.invoice_id} ({inv.file}) - {verdict}. "
-            f"Supplier invoice {inv.supplier_invoice_id}, supplier {inv.vendor}, "
-            f"purchase order {inv.purchase_order} item {inv.purchase_order_item}, "
-            f"{inv.quantity} {inv.unit} of {inv.material} at {inv.unit_price} each, "
-            f"net {inv.net_amount}, gross {inv.gross_amount} {inv.currency}, "
-            f"SAP reference {inv.reference or 'not yet assigned'}."
-        )
-        if inv.invoice_id in run.headlines:
-            lines.append(f"  Why it is blocked: {run.headlines[inv.invoice_id]}")
-
-        # Only the failures and the judged checks. Listing sixteen passes per
-        # invoice buries the two lines that actually answer anything.
-        for result in run.results.get(inv.invoice_id, []):
-            if result.passed and result.rule_id not in AGENT_RULE_IDS:
-                continue
-            decided = "judged by the agent" if result.rule_id in AGENT_RULE_IDS else "rule"
-            detail = result.detail or result.reasoning or ""
-            lines.append(
-                f"  Check {result.rule_id} '{result.label}': "
-                f"{'passed' if result.passed else 'FAILED'} ({decided}). {detail}"
-                + (f" Source: {result.citation}." if result.citation else "")
-            )
-        lines.append("")
-
-    return "\n".join(lines)
-
-
-async def answer_run(run: Run, message: str) -> AsyncIterator[ev.Event]:
-    """Answer a typed question about a run that has already been checked.
-
-    Read-only in the strongest sense: this touches neither SAP nor the run state.
-    A question is a question, and answering one must never be able to re-trigger
-    validation or move the state machine.
-    """
-    if not run.invoices:
-        yield ev.Text(
-            delta="There is no batch to discuss yet. Upload some invoices and I will check them."
-        )
-        return
-
-    language = "German" if run.locale == "de" else "English"
-    parts = [f"Run record:\n\n{_run_record(run)}"]
-
-    if run.conversation:
-        # Only the recent turns. The run record is the source of truth and is sent
-        # in full every time; older chat adds tokens without adding facts, and a
-        # long tail of it starts competing with the record for the model's
-        # attention.
-        history = "\n\n".join(
-            f"Question: {question}\nYour answer: {answer}"
-            for question, answer in run.conversation[-HISTORY_TURNS:]
-        )
-        parts.append(f"Earlier in this conversation:\n\n{history}")
-
-    parts.append(f"Question: {message}\n\nAnswer in {language}.")
-    prompt = "\n\n".join(parts)
-
-    from .bedrock import stream_text
+    # Read before writing, so the current question is not also in the history.
+    past = db.history(session_id, HISTORY_TURNS * 2)
+    db.add_message(session_id, "user", message, run_id)
 
     spoken: list[str] = []
     try:
-        async for delta in stream_text(ANSWER_SYSTEM, prompt):
+        async for delta in answer(message, locale, past):
             spoken.append(delta)
             yield ev.Text(delta=delta)
     except Exception as error:  # noqa: BLE001 - a failed answer must not fail the run
+        log.exception("answering failed")
         yield ev.Text(delta=f"I could not answer that: {error}")
         return
 
     # Only a complete answer is remembered. Recording a half-streamed one would
     # teach the next turn to refer back to something the user never finished
     # reading.
-    run.conversation.append((message, "".join(spoken)))
-    log.info("%s answered in %d turns of history", run.run_id, len(run.conversation))
+    db.add_message(session_id, "assistant", "".join(spoken), run_id)
+    log.info("%s answered from %d turns of history", session_id, len(past))

@@ -58,6 +58,12 @@
   color-scheme: dark;
   /* Slow-motion review control multiplies every duration. */
   --m: 1;
+
+  /* Elevation is a token, not a per-component literal: the same card cannot use
+     a black shadow on navy and on white and read as deliberate in both. Offset
+     plus soft blur, never a zero-offset halo. */
+  --elevation-1: 0 1px 2px rgb(0 0 0 / 0.5), 0 2px 6px -2px rgb(0 0 0 / 0.45);
+  --elevation-2: 0 2px 4px -1px rgb(0 0 0 / 0.5), 0 14px 32px -10px rgb(0 0 0 / 0.62);
 }
 
 /* Light mode: real AWS Cloudscape surfaces (pulled from @cloudscape-design/
@@ -69,6 +75,11 @@
    contrast pairing, used everywhere in both themes. */
 :root[data-theme="light"] {
   color-scheme: light;
+
+  /* Same geometry, ink-tinted rather than black: a 0.6-alpha black shadow that
+     reads as depth on navy reads as dirt on white. */
+  --elevation-1: 0 1px 2px rgb(15 20 26 / 0.09), 0 2px 6px -2px rgb(15 20 26 / 0.1);
+  --elevation-2: 0 2px 4px -1px rgb(15 20 26 / 0.1), 0 14px 32px -10px rgb(15 20 26 / 0.22);
 
   --color-background: #ffffff;
   --color-surface: #ffffff;
@@ -166,8 +177,37 @@ body {
 
 .enter {
   opacity: 0;
-  transform: translateY(6px);
-  animation: enter calc(220ms * var(--m)) var(--ease-out) forwards;
+  transform: translateY(8px);
+  animation: enter calc(260ms * var(--m)) var(--ease-out) forwards;
+}
+
+/* ---- the validation cascade ----
+
+   One line per rule event off the wire. The stagger is the server's - roughly
+   60ms between events - so nothing here may carry a delay, and no rule may key
+   off nth-child: the count is not known in advance and a fixed ladder would
+   desynchronise from the stream the moment the agent runs fast or slow.
+
+   The entrance is deliberately longer (300ms) than the gap between arrivals.
+   Consecutive lines therefore overlap mid-flight and the group reads as one
+   cascade being written down the column, instead of the staccato of a dozen
+   short animations firing end to end. Sliding in along X reinforces that: the
+   list grows downward while each line arrives sideways, so the two motions
+   never fight. */
+
+@keyframes rule-in {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.rule-in {
+  animation: rule-in calc(300ms * var(--m)) var(--ease-out) both;
 }
 
 @keyframes chip-in {
@@ -196,19 +236,114 @@ body {
   animation: call-in calc(160ms * var(--m)) var(--ease-out) forwards;
 }
 
-/* ---- rule chip: colour arrives with the scale, never before ---- */
+/* ---- the passed-checks counter, re-keyed on every increment ---- */
 
 @keyframes tick {
   from {
-    transform: scale(0.94);
+    opacity: 0.45;
+    transform: scale(0.96);
   }
   to {
+    opacity: 1;
     transform: none;
   }
 }
 
 .tick {
-  animation: tick calc(140ms * var(--m)) var(--ease-out);
+  display: inline-block;
+  animation: tick calc(180ms * var(--m)) var(--ease-out);
+}
+
+/* ---- a blocked row announces itself once, then stays marked ----
+
+   The wash fades from a strong error tint to the resting one it keeps for the
+   rest of the run, so the row that changed is obvious at the instant the
+   failing check lands and still legible as blocked a minute later. Fired by the
+   class appearing on the status change, never on a timer. */
+
+@keyframes row-alert {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.24;
+  }
+}
+
+/* The wash lives on a pseudo-element rather than the row's own background for
+   two reasons: the row already spends its `animation` on `.enter`, and its
+   `background` on the hover state. Neither has to be given up this way. */
+.row-alert {
+  position: relative;
+}
+
+.row-alert::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--color-error) 28%, transparent);
+  animation: row-alert calc(1100ms * var(--m)) var(--ease-out) both;
+}
+
+/* ---- the approval gate ----
+
+   Slower and further than anything else on the page, because it is the one
+   moment the machine stops and waits for a person. A single halo beat draws the
+   eye to the button after the card has settled and then stops - a looping pulse
+   would nag, and this is a decision, not an alarm. */
+
+@keyframes gate-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.gate-in {
+  animation: gate-in calc(440ms * var(--m)) var(--ease-out) both;
+}
+
+@keyframes gate-halo {
+  from {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-primary) 55%, transparent);
+  }
+  to {
+    box-shadow: 0 0 0 14px color-mix(in srgb, var(--color-primary) 0%, transparent);
+  }
+}
+
+.gate-halo {
+  animation: gate-halo calc(1200ms * var(--m)) var(--ease-out) calc(360ms * var(--m)) both;
+}
+
+/* ---- elevation ---- */
+
+.elevated {
+  box-shadow: var(--elevation-1);
+}
+
+.elevated-2 {
+  box-shadow: var(--elevation-2);
+}
+
+/* ---- spinner: inherits the colour of whatever is waiting ---- */
+
+@keyframes spinner {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spinner {
+  border: 2px solid color-mix(in srgb, currentColor 26%, transparent);
+  border-top-color: currentColor;
+  border-radius: 9999px;
+  animation: spinner calc(760ms * var(--m)) linear infinite;
 }
 
 /* ---- auto height without JS measurement ---- */
@@ -291,13 +426,23 @@ body {
   .enter,
   .chip-in,
   .call-in,
-  .tick {
+  .tick,
+  .rule-in,
+  .gate-in,
+  .gate-halo {
     animation: none;
     opacity: 1;
     transform: none;
   }
+  /* The blocked row keeps its resting tint - the meaning was never in the
+     movement - it just does not wash in. */
+  .row-alert::before {
+    animation: none;
+    opacity: 0.24;
+  }
   .reveal,
-  .sapref {
+  .sapref,
+  .label-swap {
     transition: none;
   }
   .sapref {
@@ -310,5 +455,10 @@ body {
     animation: none;
     inset: 0;
     transform: none;
+  }
+  /* A stopped spinner reads as a hung app, so this one slows rather than
+     stops - it is reporting that work is still running. */
+  .spinner {
+    animation-duration: 2.6s;
   }
 }
