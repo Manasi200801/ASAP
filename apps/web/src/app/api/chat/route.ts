@@ -1,4 +1,4 @@
-import { mockRun } from "@/lib/mock-run";
+import { mockAnswer, mockRun } from "@/lib/mock-run";
 import { eventStream } from "@/lib/sse";
 
 export const runtime = "nodejs";
@@ -16,7 +16,12 @@ export async function POST(request: Request) {
   const endpoint = process.env.AGENT_ENDPOINT;
 
   if (!endpoint || process.env.MOCK === "1") {
-    return eventStream(mockRun(runId));
+    // A question is a question here too. Replaying the batch for every typed
+    // message is the bug the agent had, and having it only in the fallback is
+    // worse, because the fallback is what a stranger opening the public URL
+    // sees.
+    const message: string | undefined = body.message;
+    return eventStream(message && !body.sample ? mockAnswer(message) : mockRun(runId));
   }
 
   const upstream = await fetch(`${endpoint}/chat`, {

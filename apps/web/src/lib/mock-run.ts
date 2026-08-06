@@ -276,3 +276,34 @@ export async function* mockPost(runId: string, readyIds: string[]): AsyncGenerat
       "Five parked documents in SAP, fiscal year 2025. FPL-9999 is still open and waiting on the buyer.",
   };
 }
+
+/**
+ * A scripted answer to a typed question.
+ *
+ * The mock used to ignore `message` and replay the whole batch, so every
+ * question in mock mode re-ran six invoices and answered nothing - which is
+ * exactly what the real agent used to do, and the same bug in a second place.
+ *
+ * It cannot actually reason. It matches the invoice the question names and
+ * answers from the same scripted facts the table is showing, which keeps the
+ * fallback honest: it never claims something the visible run does not support.
+ */
+export async function* mockAnswer(question: string): AsyncGenerator<RunEvent> {
+  const asked = question.toLowerCase();
+  const blocked = asked.includes("9999");
+
+  const answer = blocked
+    ? "Invoice FPL-9999 quotes purchase order 4500009999, which does not exist in SAP. " +
+      "Nothing could be matched against it, so no further check could be completed and the " +
+      "invoice cannot be parked. Supplier 17401710 has one open, goods-receipted order for " +
+      "the same material and amount, 4500001712, which the buyer would need to confirm."
+    : "Five invoices passed all sixteen checks and are ready to park, 513.50 EUR in total. " +
+      "One, FPL-9999, is blocked on a purchase order that does not exist in SAP. Nothing is " +
+      "posted until you approve, and approving parks drafts rather than paying anything.";
+
+  // Word by word, so it reads like the streamed answer it stands in for.
+  for (const word of answer.split(" ")) {
+    yield { type: "text", delta: `${word} ` };
+    await sleep(18);
+  }
+}

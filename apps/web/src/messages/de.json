@@ -43,5 +43,8 @@
   "uploadFailed": "Die Dokumente konnten nicht hochgeladen werden.",
   "allDuplicates": "Alle abgelegten Dokumente wurden in dieser Sitzung bereits gelesen. Nichts zu prüfen.",
   "duplicateOf": "Identisch mit {of}",
-  "duplicatesSkipped": "{count} identisch mit einem bereits gelesenen Dokument — übersprungen, nicht hochgeladen."
+  "duplicatesSkipped": "{count} identisch mit einem bereits gelesenen Dokument — übersprungen, nicht hochgeladen.",
+  "askUse": "Rechnung {invoice} soll auf Bestellung {po} umgestellt werden. Passt diese Bestellung wirklich zu Lieferant, Material, Menge und Preis, und was müsste noch geprüft werden?",
+  "askSend": "Entwirf eine kurze Nachricht an den Einkäufer zu Rechnung {invoice}: was falsch ist, was dadurch blockiert wird und was du von ihm brauchst.",
+  "askWhy": "Warum wurde Rechnung {invoice} blockiert? Erkläre es für jemanden, der SAP nicht nutzt."
 }

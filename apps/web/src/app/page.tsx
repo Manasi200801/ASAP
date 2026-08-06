@@ -8,7 +8,7 @@ import { MAX_FILES } from "@/lib/events";
 import { useLocale } from "@/lib/i18n";
 import type { Duplicate } from "@/lib/use-run";
 import { useRun } from "@/lib/use-run";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 export default function Page() {
   const { locale, setLocale, t } = useLocale();
@@ -17,6 +17,9 @@ export default function Page() {
   const [slow, setSlow] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [repeats, setRepeats] = useState<Duplicate[]>([]);
+  // A question typed before any batch exists. Held until there is something
+  // to answer it from.
+  const [pending, setPending] = useState<string | null>(null);
 
   const busy =
     uploading ||
@@ -47,10 +50,22 @@ export default function Page() {
     reset();
     setFiles([]);
     setRepeats([]);
+    // Asking before a batch exists used to load the batch and throw the
+    // question away. Keep it, and put it once the run has something to answer
+    // from - the question is why they clicked in the first place.
+    setPending(message ?? null);
     // No documents means the demo batch, and it says so rather than relying on
     // the agent to guess from an empty key list.
-    await start(locale, message, { sample: true });
+    await start(locale, undefined, { sample: true });
   }
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `ask` is stable per run
+  useEffect(() => {
+    if (!pending || run.state !== "awaiting-approval" || run.answering) return;
+    const question = pending;
+    setPending(null);
+    void ask(locale, question);
+  }, [pending, run.state, run.answering, locale]);
 
   async function onFiles(dropped: File[]) {
     if (dropped.length === 0) return;
@@ -192,7 +207,14 @@ export default function Page() {
                   );
                 })}
 
-                {run.invoices.length > 0 ? <BatchTable invoices={run.invoices} t={t} /> : null}
+                {run.invoices.length > 0 ? (
+                  <BatchTable
+                    invoices={run.invoices}
+                    onAsk={(question) => ask(locale, question)}
+                    disabled={busy || run.answering}
+                    t={t}
+                  />
+                ) : null}
 
                 {run.state === "awaiting-approval" ? (
                   <ApprovalCard

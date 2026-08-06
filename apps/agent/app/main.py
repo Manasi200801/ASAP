@@ -101,9 +101,26 @@ async def chat(request: ChatRequest) -> StreamingResponse:
     SAP and answered nothing.
     """
     existing = store.get(request.runId)
-    if request.message and existing is not None and existing.invoices:
-        log.info("chat %s answering: %r", request.runId, request.message[:80])
-        return stream(answer_run(existing, request.message))
+    if request.message and not request.sample:
+        if existing is not None and existing.invoices:
+            log.info("chat %s answering: %r", request.runId, request.message[:80])
+            return stream(answer_run(existing, request.message))
+
+        # A question about a run this process no longer holds - the store is in
+        # memory, so a restart loses it. Say that, rather than falling through
+        # and starting a run, which is what made asking a question re-check six
+        # invoices in the first place.
+        log.info("chat %s asked about a run it does not have", request.runId)
+
+        async def forgotten() -> AsyncIterator[ev.Event]:
+            yield ev.Text(
+                delta=(
+                    "I no longer have that batch - the agent restarted since it ran. "
+                    "Upload the documents again and I can answer from the new run."
+                )
+            )
+
+        return stream(forgotten())
 
     log.info(
         "chat %s starting run: %d files, locale=%s, sap=%s, judge=%s",

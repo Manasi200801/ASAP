@@ -21,7 +21,18 @@ const DOT_TONE: Record<InvoiceRow["status"], string> = {
   parked: "bg-brass",
 };
 
-export function BatchTable({ invoices, t }: { invoices: InvoiceRow[]; t: Translate }) {
+export function BatchTable({
+  invoices,
+  onAsk,
+  disabled,
+  t,
+}: {
+  invoices: InvoiceRow[];
+  /** Puts a question to the agent about this run. */
+  onAsk: (question: string) => void;
+  disabled: boolean;
+  t: Translate;
+}) {
   const [open, setOpen] = useState<Record<string, boolean>>({});
 
   return (
@@ -102,10 +113,33 @@ export function BatchTable({ invoices, t }: { invoices: InvoiceRow[]; t: Transla
                     ) : null}
                     <div className="mt-3 flex flex-wrap gap-1.5">
                       {invoice.suggestion ? (
-                        <Action label={t("actUse", { po: invoice.suggestion.value })} />
+                        <Action
+                          label={t("actUse", { po: invoice.suggestion.value })}
+                          disabled={disabled}
+                          onClick={() =>
+                            onAsk(
+                              t("askUse", {
+                                invoice: invoice.supplierInvoiceId,
+                                po: invoice.suggestion?.value ?? "",
+                              }),
+                            )
+                          }
+                        />
                       ) : null}
-                      <Action label={t("actSend")} />
-                      <Action label={t("actAsk")} />
+                      <Action
+                        label={t("actSend")}
+                        disabled={disabled}
+                        onClick={() =>
+                          onAsk(t("askSend", { invoice: invoice.supplierInvoiceId }))
+                        }
+                      />
+                      <Action
+                        label={t("actAsk")}
+                        disabled={disabled}
+                        onClick={() =>
+                          onAsk(t("askWhy", { invoice: invoice.supplierInvoiceId }))
+                        }
+                      />
                     </div>
                   </div>
                 ) : null}
@@ -118,11 +152,21 @@ export function BatchTable({ invoices, t }: { invoices: InvoiceRow[]; t: Transla
   );
 }
 
-function Action({ label }: { label: string }) {
+function Action({
+  label,
+  onClick,
+  disabled,
+}: {
+  label: string;
+  onClick: () => void;
+  disabled: boolean;
+}) {
   return (
     <button
       type="button"
-      className="pressable cursor-pointer rounded-full border border-line bg-surface-3 px-2.5 py-1 text-[12px] text-ink-dim transition-colors hover:border-ink-faint hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-brass"
+      onClick={onClick}
+      disabled={disabled}
+      className="pressable cursor-pointer rounded-full border border-line bg-surface-3 px-2.5 py-1 text-[12px] text-ink-dim transition-colors hover:border-ink-faint hover:text-ink disabled:cursor-default disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brass"
     >
       {label}
     </button>
