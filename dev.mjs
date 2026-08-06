@@ -46,14 +46,30 @@ const specs = [
     args: ["run", "dev", "--", "--port", WEB_PORT],
     cwd: join(root, "apps", "web"),
     env: {
-      AGENT_ENDPOINT: process.env.AGENT_ENDPOINT || `http://localhost:${AGENT_PORT}`,
+      // 127.0.0.1, not localhost. uvicorn binds IPv4 loopback only, and Node
+      // resolves localhost to ::1 first on Windows - which fails to connect
+      // against a server that is running perfectly well.
+      AGENT_ENDPOINT: process.env.AGENT_ENDPOINT || `http://127.0.0.1:${AGENT_PORT}`,
     },
   },
   {
     name: "agent",
     colour: 35, // magenta
     cmd: python,
-    args: ["-m", "uvicorn", "app.main:app", "--reload", "--port", AGENT_PORT],
+    // --reload-dir app, not a bare --reload. Bare --reload watches the whole
+    // working directory, which here means .venv and build/ - tens of thousands
+    // of files to stat on every poll. It makes startup slow, burns CPU idling,
+    // and restarts the agent when nothing you wrote has changed.
+    args: [
+      "-m",
+      "uvicorn",
+      "app.main:app",
+      "--reload",
+      "--reload-dir",
+      "app",
+      "--port",
+      AGENT_PORT,
+    ],
     cwd: join(root, "apps", "agent"),
     env: { PYTHONUNBUFFERED: "1" },
   },
@@ -130,5 +146,34 @@ for (const spec of specs) {
 for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => stop(0));
 
 console.log(
-  `web  -> http://localhost:${WEB_PORT}\nagent -> http://localhost:${AGENT_PORT}   (Ctrl+C stops both)\n`,
+  `web    -> http://localhost:${WEB_PORT}\n` +
+    `agent  -> http://localhost:${AGENT_PORT}   (Ctrl+C stops both)\n` +
+    // Named because a bare `uvicorn` on PATH is usually a different Python, and
+    // that shows up as an SSL error about a missing file rather than as anything
+    // mentioning interpreters. Seeing the path rules it out in one glance.
+    `python -> ${python}\n`,
 );
+
+// Which backends are actually live, read off the running process once it
+// answers. Reading .env.local and hoping is how a run against a stale server
+// serving fakes gets mistaken for a real one.
+(async () => {
+  const deadline = Date.now() + 60_000;
+  while (Date.now() < deadline && !stopping) {
+    try {
+      // 127.0.0.1 for the same reason as AGENT_ENDPOINT above.
+      const response = await fetch(`http://127.0.0.1:${AGENT_PORT}/health`);
+      if (response.ok) {
+        const health = await response.json();
+        const live = health.sap === "McpSap" && health.judge === "BedrockJudge";
+        console.log(
+          `${paint(live ? 32 : 33, live ? "live " : "fakes")} sap=${health.sap} judge=${health.judge}\n`,
+        );
+        return;
+      }
+    } catch {
+      // Not listening yet.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 400));
+  }
+})();

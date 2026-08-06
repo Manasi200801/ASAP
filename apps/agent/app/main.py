@@ -34,6 +34,37 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 
+def _repair_ca_bundle() -> None:
+    """Drop CA bundle paths that point at nothing.
+
+    Symptom on a teammate's machine:
+
+        SSL validation failed for https://bedrock-runtime.us-east-1.amazonaws.com/...
+        [Errno 2] No such file or directory
+
+    That errno is the tell. It is not a certificate that failed to verify - it is
+    a certificate file that does not exist. Anaconda, corporate proxy installers
+    and old virtualenvs all export these variables pointing into a prefix that
+    later moved, and every boto3 call then fails with an error that reads like a
+    network or trust problem.
+
+    botocore ships its own CA bundle and uses it when nothing overrides it, so
+    removing a dead override is the fix rather than a workaround.
+    """
+    for name in ("AWS_CA_BUNDLE", "REQUESTS_CA_BUNDLE", "SSL_CERT_FILE", "CURL_CA_BUNDLE"):
+        configured = os.environ.get(name)
+        if configured and not pathlib.Path(configured).is_file():
+            del os.environ[name]
+            logging.getLogger("app.http").warning(
+                "%s pointed at %s, which does not exist. Ignoring it and using the "
+                "certificates bundled with botocore.",
+                name,
+                configured,
+            )
+
+
+_repair_ca_bundle()
+
 from . import events as ev  # noqa: E402
 from .judge import build_judge  # noqa: E402
 from .orchestrator import RunStore, answer_run, post_run, validate_run  # noqa: E402

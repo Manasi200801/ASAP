@@ -10,8 +10,29 @@ together with prefixed logs. To run only this half:
 
 ```bash
 cd apps/agent
-uvicorn app.main:app --reload --port 8000
+
+# macOS / Linux
+.venv/bin/python -m uvicorn app.main:app --reload --reload-dir app --port 8000
+
+# Windows
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --reload-dir app --port 8000
 ```
+
+Run it through the venv interpreter, not a bare `uvicorn`. A bare `uvicorn`
+resolves off `PATH`, and on a machine with Anaconda installed that is usually
+Anaconda's — a different interpreter, with different packages and a different
+SSL configuration. The usual symptom is not an import error but this:
+
+```
+SSL validation failed for https://bedrock-runtime.us-east-1.amazonaws.com/...
+[Errno 2] No such file or directory
+```
+
+which reads like a network problem and is actually the wrong Python.
+
+`--reload-dir app` keeps the watcher off `.venv` and `build/`. Without it uvicorn
+watches the whole directory — tens of thousands of files, slow to start, and it
+restarts the agent when nothing you wrote changed.
 
 It runs with no AWS credentials. `FakeSap` and `FakeJudge` answer from the Lab 06
 demo data, so the full batch flow works today — five invoices park, `FPL-9999`
