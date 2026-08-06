@@ -1,22 +1,44 @@
+# --- secrets ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+aws-credentials*
+.aws/
+
+# --- Node ---
 node_modules/
+dist/
+build/
 .next/
 out/
-build/
-dist/
-*.tsbuildinfo
+*.log
+npm-debug.log*
+.turbo/
 next-env.d.ts
+*.tsbuildinfo
+coverage/
+.vercel
 
-.env
-.env.local
-.env*.local
-
+# --- Python ---
 __pycache__/
-*.py[cod]
+*.pyc
 .venv/
 venv/
+*.egg-info/
 
+# --- OS / editor ---
 .DS_Store
 Thumbs.db
-*.log
-.vercel
-coverage/
+.vscode/
+.idea/
+*.swp
+
+# --- large media (host externally per hackathon rules) ---
+*.mp4
+*.mov
+*.zip
+
+# --- skills CLI cache ---
+.skills-cache/
