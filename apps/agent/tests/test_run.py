@@ -98,7 +98,10 @@ def test_park_payload_parks_and_never_posts() -> None:
 
     payload = park_payload(inv, 0, run)
     assert payload["SupplierInvoiceStatus"] == "A", "status A parks; anything else posts for payment"
-    assert payload["PostingDate"] == "2025-03-15", "the workshop books only accept an early-2025 date"
+    # OData V2 epoch-millisecond form for 2025-03-15, the only open posting
+    # period on the workshop system. A plain date string fails at write time.
+    assert payload["PostingDate"] == "/Date(1741996800000)/", payload["PostingDate"]
+    assert payload["DocumentDate"] == payload["PostingDate"]
     assert payload["TaxIsCalculatedAutomatically"] is True
     assert payload["to_SuplrInvcItemPurOrdRef"][0]["PurchaseOrder"] == inv.purchase_order
 

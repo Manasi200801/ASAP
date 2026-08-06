@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import AsyncIterator, Literal
 
 from . import events as ev
@@ -240,12 +241,23 @@ async def validate_run(
     yield ev.Approval(runId=run.run_id, readyIds=run.ready, blockedIds=run.blocked)
 
 
+def odata_date(day: str) -> str:
+    """`2025-03-15` -> `/Date(1741996800000)/`.
+
+    OData V2 carries dates as epoch milliseconds in that wrapper. Sending the
+    plain string is accepted by nothing and fails at the point of writing.
+    """
+    stamp = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    return f"/Date({int(stamp.timestamp() * 1000)})/"
+
+
 def park_payload(inv: Extracted, index: int, run: Run) -> dict:
     """The deep insert Lab 06 specifies. Status A parks; it never posts for payment."""
+    posting = odata_date(inv.posting_date)
     return {
         "CompanyCode": inv.company_code,
-        "DocumentDate": inv.posting_date,
-        "PostingDate": inv.posting_date,
+        "DocumentDate": posting,
+        "PostingDate": posting,
         "SupplierInvoiceIDByInvcgParty": inv.reference,
         "InvoicingParty": inv.vendor,
         "DocumentCurrency": inv.currency,
