@@ -10,7 +10,7 @@
  * ahead of apps/web/.env.local (Next never overwrites an inherited env var), so
  * AGENT_PORT alone is enough to move both halves.
  */
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
@@ -30,6 +30,31 @@ const python = ["Scripts/python.exe", "bin/python", "bin/python3"]
 if (!python) {
   console.error(
     "No virtualenv found at apps/agent/.venv — run the agent setup in README.md first.",
+  );
+  process.exit(1);
+}
+
+// A port already in use kills uvicorn with "[WinError 10013] An attempt was made
+// to access a socket in a way forbidden by its access permissions", which names
+// neither the port nor the process - and then this runner stops the other half,
+// so it reads as the whole thing refusing to start. One line naming the owner
+// saves the twenty minutes that costs. Read-only: reclaiming the port is the
+// operator's call, since it might not be theirs to kill.
+for (const [name, port] of [
+  ["web", WEB_PORT],
+  ["agent", AGENT_PORT],
+]) {
+  const owner = win
+    ? execFileSync("netstat", ["-ano"], { encoding: "utf8" })
+        .split(/\r?\n/)
+        .map((line) => line.trim().split(/\s+/))
+        .find((c) => c[3] === "LISTENING" && c[1]?.endsWith(`:${port}`))?.[4]
+    : null;
+  if (!owner) continue;
+  console.error(
+    `Port ${port} (${name}) is already in use by process ${owner}.\n` +
+      `Stop it with:  taskkill /pid ${owner} /t /f\n` +
+      "Or move both:  WEB_PORT=3001 AGENT_PORT=8001 npm run dev",
   );
   process.exit(1);
 }
@@ -111,6 +136,10 @@ function stop(code) {
       // Already gone. Nothing to do.
     }
   }
+  // Deliberately not "kill whatever holds our port": if this runner is exiting
+  // *because* the port was already taken, that would kill someone else's server
+  // to clean up after ourselves.
+  //
   // Backstop for a child that ignores the signal. Unref'd so a clean exit is
   // still immediate.
   setTimeout(() => process.exit(code), 5000).unref();
