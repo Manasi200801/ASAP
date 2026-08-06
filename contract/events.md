@@ -341,3 +341,25 @@ characters, so a 12-digit account ID leaves `-1` through `-99`.
 The invoices carry vendor `17401710`; the purchase order reports `BP1710`. Naive string equality
 on rule 4 fails all five valid invoices. This is why rule 4 is agent-decided: the agent resolves
 the identity by reading SAP and states the link in its reasoning.
+
+---
+
+## Verified live, 6 Aug 2026
+
+The whole path was exercised against the real workshop account, not mocks.
+
+| Leg | Evidence |
+|---|---|
+| Presigned upload | `PUT` 200 to `s3://516359819848-invoice/runs/<runId>/`, browser preflight 200 |
+| Extraction | Bedrock read all six FPL PDFs field-perfect |
+| SAP reads | PO `4500001463` matched the invoice; `4500009999` correctly absent; GR `5000002033` |
+| Judgment | The model resolved `17401710` vs `BP1710` and explained why |
+| Approval gate | A second `/approve` on the same run is rejected |
+| SAP write | Documents `5100001500` and `5100001501`, status `A`, gross `59.50 EUR`, not reversed |
+
+MCP runtime: `arn:aws:bedrock-agentcore:us-east-1:516359819848:runtime/sap_mcp_server_1786023560-PTTQ1n8Y2J`
+Model: `us.anthropic.claude-sonnet-4-6` — Sonnet 5 and Opus 5 are listed by
+`list-inference-profiles` but Converse returns `AccessDenied` on this account.
+
+Bucket CORS is configured for `http://localhost:3000`, `http://127.0.0.1:3000`
+and `https://*.vercel.app`.
