@@ -3,7 +3,7 @@ import type { Translate } from "@/lib/i18n";
 
 const TONE: Record<RuleEvent["status"], string> = {
   pass: "opacity-100",
-  fail: "border-blocked-deep bg-blocked/10 text-blocked opacity-100",
+  fail: "border-error/60 bg-error/10 text-error opacity-100",
   skip: "opacity-40",
 };
 
@@ -24,18 +24,18 @@ export function RuleChips({ rules, t }: { rules: RuleEvent[]; t: Translate }) {
         {rules.map((rule) => {
           const agent = rule.decidedBy === "agent";
           const passTone = agent
-            ? "border-agent-deep bg-agent/10 text-agent"
-            : "border-ok-deep bg-ok/[0.07] text-ok";
+            ? "border-secondary/50 bg-secondary/10 text-secondary"
+            : "border-success/50 bg-success/[0.08] text-success";
 
           return (
             <span
               key={rule.ruleId}
               title={rule.detail ?? (agent ? t("decidedByAgent") : undefined)}
-              className={`tick inline-flex items-center gap-[5px] rounded border border-line bg-surface-2 px-2 py-[3px] font-data text-[10.5px] text-ink-faint ${
+              className={`tick inline-flex items-center gap-[5px] rounded-[8px] border border-outline-variant bg-surface-container px-2 py-[3px] text-[11.5px] text-on-surface-faint ${
                 rule.status === "pass" ? passTone : TONE[rule.status]
               }`}
             >
-              {agent ? <span className="flex-none text-[8px] text-agent">◆</span> : null}
+              {agent ? <span className="flex-none text-[9px] text-secondary">◆</span> : null}
               {rule.label}
             </span>
           );
@@ -45,10 +45,10 @@ export function RuleChips({ rules, t }: { rules: RuleEvent[]; t: Translate }) {
       {withReasoning.map((rule) => (
         <div
           key={`why-${rule.ruleId}`}
-          className="mt-2.5 max-w-[66ch] border-agent-deep border-l-2 pl-2.5 text-[12.5px] text-ink-dim"
+          className="mt-2.5 max-w-[66ch] border-secondary/50 border-l-2 pl-2.5 text-[13.5px] text-on-surface-variant"
         >
-          <b className="font-medium text-agent">◆ {rule.label}</b> — {rule.reasoning}
-          {rule.citation ? <span className="text-ink-faint"> ({rule.citation})</span> : null}
+          <b className="font-medium text-secondary">◆ {rule.label}</b> — {rule.reasoning}
+          {rule.citation ? <span className="text-on-surface-faint"> ({rule.citation})</span> : null}
         </div>
       ))}
     </div>

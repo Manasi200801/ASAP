@@ -32,25 +32,26 @@ export function ApprovalCard({
   }
 
   return (
-    <div className="enter flex max-w-[520px] flex-col gap-2.5 rounded-lg border border-brass-deep bg-gradient-to-b from-surface-2 to-surface-1 p-3.5">
+    <div className="enter flex max-w-[620px] flex-col gap-3 rounded-[12px] border border-outline-variant bg-surface-container-high p-4 shadow-[0_1px_3px_rgba(0,0,0,0.4)]">
       <button
         type="button"
         onClick={approve}
         disabled={state !== "idle"}
-        className="pressable flex min-h-[42px] w-full cursor-pointer items-center justify-between gap-3 rounded-md bg-brass px-4 font-semibold text-[#17130a] text-sm transition-[filter] hover:brightness-107 disabled:cursor-default focus-visible:outline focus-visible:outline-2 focus-visible:outline-brass focus-visible:outline-offset-[3px]"
+        aria-busy={state === "working"}
+        className="state-layer pressable flex min-h-[48px] w-full cursor-pointer items-center justify-between gap-3 rounded-full bg-primary px-6 font-medium text-[16px] text-on-primary transition-opacity disabled:cursor-default disabled:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[3px] focus-visible:outline-primary"
       >
         <span className="label-swap" data-swapping={state === "swapping"}>
           {state === "idle"
             ? t("approveLabel", { count: readyCount })
             : t("approveWorking", { count: readyCount })}
         </span>
-        <span className="font-data opacity-65">→</span>
+        <span className="opacity-80">→</span>
       </button>
 
-      <div className="flex justify-between gap-3 text-[12.5px] text-ink-dim">
+      <div className="flex justify-between gap-3 text-[14px] text-on-surface-variant">
         <span>{t("approveSub")}</span>
         {blockedCount > 0 ? (
-          <span className="whitespace-nowrap font-data text-[11px] text-blocked">
+          <span className="whitespace-nowrap text-[13.5px] text-error">
             {t("excluded", { count: blockedCount })}
           </span>
         ) : null}

@@ -1,29 +1,54 @@
 @import "tailwindcss";
 
+/* AWS-console-inspired dark theme. Roles keep M3-style semantics (primary/
+   secondary, surface container tiers, outline tiers) so usage stays
+   predictable, but the palette itself follows AWS's console: deep navy
+   surfaces, Smile-orange for primary actions, AWS blue for secondary/
+   informational accents, and status green/red always paired with text or
+   an icon, never color alone. */
 @theme {
-  --color-ground: #0a0a0b;
-  --color-surface-1: #101013;
-  --color-surface-2: #16161b;
-  --color-surface-3: #1c1c22;
-  --color-line: #1f1f26;
-  --color-line-strong: #2c2c35;
-  --color-ink: #e9e9ee;
-  --color-ink-dim: #8c8c99;
-  --color-ink-faint: #575761;
-  --color-brass: #c89b3c;
-  --color-brass-deep: #6e5522;
-  --color-ok: #3fb950;
-  --color-ok-deep: #143d1c;
-  --color-blocked: #f0524a;
-  --color-blocked-deep: #3b1512;
-  --color-agent: #7fa8d9;
-  --color-agent-deep: #23364d;
-  --color-pending: #4c4c57;
+  --color-background: #0f1b2a;
+  --color-surface: #131c29;
+  --color-surface-dim: #0b131c;
+  --color-surface-bright: #2a3c50;
+  --color-surface-container-lowest: #0b131c;
+  --color-surface-container-low: #16212e;
+  --color-surface-container: #1b2836;
+  --color-surface-container-high: #223244;
+  --color-surface-container-highest: #2a3c52;
 
-  --font-data: ui-monospace, SFMono-Regular, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  --color-outline: #45596d;
+  --color-outline-variant: #263646;
 
-  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
-  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --color-on-surface: #e9edf1;
+  --color-on-surface-variant: #9fb0c0;
+  --color-on-surface-faint: #7c8fa1;
+
+  --color-primary: #ff9900;
+  --color-on-primary: #0f1b2a;
+  --color-primary-container: #4a3006;
+  --color-on-primary-container: #ffc266;
+
+  --color-secondary: #539fe5;
+  --color-on-secondary: #0b1723;
+  --color-secondary-container: #16324d;
+  --color-on-secondary-container: #a3cdf5;
+
+  --color-success: #2fb67c;
+  --color-on-success: #04231c;
+  --color-success-container: #0f3d2c;
+  --color-on-success-container: #7fe6b8;
+
+  --color-error: #ff6161;
+  --color-on-error: #2b0a0a;
+  --color-error-container: #4a1414;
+  --color-on-error-container: #ffb3b3;
+
+  --font-ui: var(--font-inter), Inter, "Segoe UI", system-ui, sans-serif;
+
+  /* M3 easing: emphasized-decelerate for entrances, standard for everything else. */
+  --ease-out: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --ease-in-out: cubic-bezier(0.2, 0, 0, 1);
 }
 
 :root {
@@ -33,8 +58,45 @@
 }
 
 body {
-  background: var(--color-ground);
-  color: var(--color-ink);
+  background: var(--color-background);
+  color: var(--color-on-surface);
+  font-family: var(--font-ui);
+  font-size: 17px;
+  font-feature-settings: "tnum" 1;
+}
+
+/* ---- state layers: M3 hover/focus/pressed overlays on top of a color role ---- */
+
+.state-layer {
+  position: relative;
+}
+
+.state-layer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: currentColor;
+  opacity: 0;
+  transition: opacity calc(120ms * var(--m)) var(--ease-in-out);
+  pointer-events: none;
+}
+
+.state-layer:hover::after {
+  opacity: 0.08;
+}
+
+.state-layer:focus-visible::after {
+  opacity: 0.12;
+}
+
+.state-layer:active::after {
+  opacity: 0.12;
+}
+
+.state-layer:disabled::after,
+.state-layer[aria-disabled="true"]::after {
+  opacity: 0;
 }
 
 /* ---- entrances: stagger comes from event arrival, never from nth-child ---- */
@@ -144,6 +206,31 @@ body {
   transform: scale(0.97);
 }
 
+/* ---- indeterminate linear progress (active progress = primary) ---- */
+
+@keyframes progress-indeterminate {
+  0% {
+    transform: translateX(-60%) scaleX(0.4);
+  }
+  100% {
+    transform: translateX(160%) scaleX(0.4);
+  }
+}
+
+.progress-track {
+  position: relative;
+  overflow: hidden;
+  background: var(--color-primary-container);
+}
+
+.progress-indicator {
+  position: absolute;
+  inset: 0;
+  transform-origin: left center;
+  background: var(--color-primary);
+  animation: progress-indeterminate calc(1100ms * var(--m)) var(--ease-in-out) infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .enter,
   .chip-in,
@@ -161,6 +248,11 @@ body {
     transform: none;
   }
   .pressable:active {
+    transform: none;
+  }
+  .progress-indicator {
+    animation: none;
+    inset: 0;
     transform: none;
   }
 }

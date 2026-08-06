@@ -5,29 +5,30 @@ import type { Translate } from "@/lib/i18n";
 import { useState } from "react";
 import { RuleChips } from "./rule-chips";
 
-const GRID = "grid grid-cols-[128px_104px_84px_84px_54px_78px] items-center gap-2.5 px-3 py-2.5";
+const GRID =
+  "grid min-w-[860px] grid-cols-[minmax(170px,1.2fr)_minmax(140px,0.9fr)_minmax(120px,0.8fr)_minmax(110px,0.7fr)_minmax(82px,0.5fr)_minmax(110px,0.7fr)] items-center gap-4 px-4 py-3";
 
 const STATUS_TONE: Record<InvoiceRow["status"], string> = {
-  pending: "text-ink-faint",
-  ready: "text-ok",
-  blocked: "text-blocked",
-  parked: "text-brass",
+  pending: "text-on-surface-faint",
+  ready: "text-success",
+  blocked: "text-error",
+  parked: "text-secondary",
 };
 
 const DOT_TONE: Record<InvoiceRow["status"], string> = {
-  pending: "bg-pending",
-  ready: "bg-ok",
-  blocked: "bg-blocked",
-  parked: "bg-brass",
+  pending: "bg-outline",
+  ready: "bg-success",
+  blocked: "bg-error",
+  parked: "bg-secondary",
 };
 
 export function BatchTable({ invoices, t }: { invoices: InvoiceRow[]; t: Translate }) {
   const [open, setOpen] = useState<Record<string, boolean>>({});
 
   return (
-    <div className="enter overflow-hidden rounded-md border border-line bg-surface-1">
+    <div className="enter overflow-x-auto rounded-[12px] border border-outline-variant bg-surface">
       <div
-        className={`${GRID} border-line border-b bg-surface-2 font-data text-[10px] text-ink-faint uppercase tracking-[0.12em]`}
+        className={`${GRID} border-outline-variant border-b bg-surface-container-high font-semibold text-[12px] text-on-surface-faint uppercase tracking-[0.1em]`}
       >
         <div>{t("colInvoice")}</div>
         <div>{t("colPo")}</div>
@@ -46,29 +47,31 @@ export function BatchTable({ invoices, t }: { invoices: InvoiceRow[]; t: Transla
         return (
           <div
             key={invoice.invoiceId}
-            className={`enter border-line border-b last:border-b-0 ${
-              invoice.status === "blocked" ? "bg-blocked/[0.055]" : ""
+            className={`enter border-outline-variant border-b last:border-b-0 ${
+              invoice.status === "blocked" ? "bg-error/[0.06]" : ""
             }`}
           >
             <button
               type="button"
               aria-expanded={isOpen}
               onClick={() => setOpen((prev) => ({ ...prev, [invoice.invoiceId]: !isOpen }))}
-              className={`${GRID} w-full cursor-pointer text-left transition-colors hover:bg-surface-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brass focus-visible:-outline-offset-2`}
+              className={`${GRID} w-full cursor-pointer text-left transition-colors hover:bg-surface-container focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary focus-visible:-outline-offset-2`}
             >
-              <div className="font-data text-[12px] tabular-nums">{invoice.supplierInvoiceId}</div>
-              <div className="font-data text-[12px] text-ink-dim tabular-nums">
+              <div className="text-[15px] text-on-surface tabular-nums">
+                {invoice.supplierInvoiceId}
+              </div>
+              <div className="text-[15px] text-on-surface-variant tabular-nums">
                 {invoice.purchaseOrder}
               </div>
-              <div className="font-data text-[12px] text-ink-dim tabular-nums">
+              <div className="text-[15px] text-on-surface-variant tabular-nums">
                 {invoice.vendor}
               </div>
-              <div className="text-right font-data text-[12px] tabular-nums">
+              <div className="text-right text-[15px] text-on-surface tabular-nums">
                 {invoice.netAmount}
               </div>
-              <div className="text-right font-data text-[12px] text-ink-dim tabular-nums">
+              <div className="text-right text-[15px] text-on-surface-variant tabular-nums">
                 {invoice.sapDocument ? (
-                  <span className="sapref text-[11.5px] text-brass" data-on="true">
+                  <span className="sapref text-[14px] text-secondary" data-on="true">
                     {invoice.sapDocument}
                   </span>
                 ) : evaluated ? (
@@ -77,13 +80,21 @@ export function BatchTable({ invoices, t }: { invoices: InvoiceRow[]; t: Transla
                   "—"
                 )}
               </div>
-              <div
-                className={`inline-flex min-w-[74px] items-center gap-1.5 font-data text-[10.5px] uppercase tracking-[0.08em] ${STATUS_TONE[invoice.status]}`}
-              >
+              <div className="flex items-center justify-between gap-2">
+                <div
+                  className={`inline-flex min-w-[96px] items-center gap-2 font-semibold text-[13px] uppercase tracking-[0.06em] ${STATUS_TONE[invoice.status]}`}
+                >
+                  <span
+                    className={`h-1.5 w-1.5 flex-none rounded-full transition-colors ${DOT_TONE[invoice.status]}`}
+                  />
+                  {t(`st${invoice.status[0].toUpperCase()}${invoice.status.slice(1)}` as never)}
+                </div>
                 <span
-                  className={`h-1.5 w-1.5 flex-none rounded-full transition-colors ${DOT_TONE[invoice.status]}`}
-                />
-                {t(`st${invoice.status[0].toUpperCase()}${invoice.status.slice(1)}` as never)}
+                  aria-hidden="true"
+                  className={`flex-none text-on-surface-faint text-[11px] transition-transform ${isOpen ? "rotate-90" : ""}`}
+                >
+                  ▶
+                </span>
               </div>
             </button>
 
@@ -92,13 +103,19 @@ export function BatchTable({ invoices, t }: { invoices: InvoiceRow[]; t: Transla
                 <RuleChips rules={invoice.rules} t={t} />
 
                 {invoice.headline ? (
-                  <div className="mx-3 mb-3.5 border-blocked border-l-2 pl-3">
-                    <p className="max-w-[62ch]">{invoice.headline}</p>
+                  <div className="mx-4 mb-4 border-error border-l-2 pl-4">
+                    <p className="max-w-[72ch] text-[16px] text-on-surface leading-6">
+                      {invoice.headline}
+                    </p>
                     {invoice.impact ? (
-                      <p className="mt-1 max-w-[62ch] text-ink-dim">{invoice.impact}</p>
+                      <p className="mt-1 max-w-[72ch] text-[15px] text-on-surface-variant leading-6">
+                        {invoice.impact}
+                      </p>
                     ) : null}
                     {invoice.suggestion ? (
-                      <p className="mt-1 max-w-[62ch] text-agent">◆ {invoice.suggestion.text}</p>
+                      <p className="mt-1 max-w-[72ch] text-[15px] text-secondary leading-6">
+                        ◆ {invoice.suggestion.text}
+                      </p>
                     ) : null}
                     <div className="mt-3 flex flex-wrap gap-1.5">
                       {invoice.suggestion ? (
@@ -122,7 +139,7 @@ function Action({ label }: { label: string }) {
   return (
     <button
       type="button"
-      className="pressable cursor-pointer rounded-full border border-line bg-surface-3 px-2.5 py-1 text-[12px] text-ink-dim transition-colors hover:border-ink-faint hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-brass"
+      className="state-layer pressable cursor-pointer rounded-[8px] border border-outline bg-surface-container-high px-3 py-1.5 text-[14px] text-on-surface-variant transition-colors hover:text-on-surface focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
     >
       {label}
     </button>

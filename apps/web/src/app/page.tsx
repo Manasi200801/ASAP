@@ -2,7 +2,6 @@
 
 import { ApprovalCard } from "@/components/approval-card";
 import { BatchTable } from "@/components/batch-table";
-import { CallRail } from "@/components/call-rail";
 import { Composer } from "@/components/composer";
 import { useLocale } from "@/lib/i18n";
 import { useRun } from "@/lib/use-run";
@@ -12,7 +11,6 @@ export default function Page() {
   const { locale, setLocale, t } = useLocale();
   const { run, start, approve, reset } = useRun();
   const [files, setFiles] = useState<string[]>([]);
-  const [slow, setSlow] = useState(false);
 
   const busy = run.state === "extracting" || run.state === "validating" || run.state === "posting";
   const started = run.state !== "idle";
@@ -26,14 +24,6 @@ export default function Page() {
     (total, i) => total + i.rules.filter((r) => r.status !== "skip").length,
     0,
   );
-
-  function toggleSlow() {
-    const next = !slow;
-    setSlow(next);
-    // Multiplies every CSS duration at once, so the cascade can be reviewed frame
-    // by frame. Reviewing motion in slow motion catches what full speed hides.
-    document.documentElement.style.setProperty("--m", next ? "4" : "1");
-  }
 
   async function begin(message?: string, names: string[] = []) {
     reset();
@@ -52,104 +42,108 @@ export default function Page() {
   }
 
   return (
-    <main className="mx-auto max-w-[1080px] px-5 pb-24">
-      <section className="mt-10 overflow-hidden rounded-lg border border-line bg-surface-1">
-        <header className="flex flex-wrap items-center gap-4 border-line border-b bg-surface-2 px-4 py-3">
-          <div className="font-data text-[12px] uppercase tracking-[0.12em]">
-            STRIKE <span className="text-brass">AP</span>
+    <main className="flex min-h-screen w-full flex-col bg-surface">
+      <div className="h-[3px] flex-none">
+        {busy ? (
+          <div className="progress-track h-full w-full">
+            <div className="progress-indicator h-full w-1/3" />
           </div>
+        ) : null}
+      </div>
 
-          <div
-            className={`ml-auto flex gap-3.5 font-data text-[11.5px] text-ink-dim tabular-nums transition-opacity ${
-              started ? "opacity-100" : "opacity-0"
-            }`}
-          >
-            <span>
-              <b className="font-medium text-ok">{ready}</b> {t("ready")}
-            </span>
-            <span>
-              <b className={blocked ? "font-medium text-blocked" : "font-medium text-ink"}>
-                {blocked}
-              </b>{" "}
-              {t("blocked")}
-            </span>
-            <span>
-              <b className="font-medium text-ink">{checks}</b> {t("checks")}
-            </span>
-            <span className="text-ink-faint">{t("period")}</span>
-          </div>
+      <header className="flex flex-wrap items-center gap-5 border-outline-variant border-b bg-surface-container-low px-6 py-4">
+        <div className="font-semibold text-[17px] text-on-surface uppercase tracking-[0.11em]">
+          STRIKE <span className="text-primary">AP</span>
+        </div>
 
-          <div className="flex gap-1.5">
-            {(["en", "de"] as const).map((code) => (
-              <Ctrl
-                key={code}
-                pressed={locale === code}
-                onClick={() => setLocale(code)}
-                label={code.toUpperCase()}
-              />
-            ))}
-            <Ctrl pressed={slow} onClick={toggleSlow} label="0.25×" />
-          </div>
-        </header>
+        <div
+          className={`ml-auto flex gap-4 text-[14px] text-on-surface-variant tabular-nums transition-opacity ${
+            started ? "opacity-100" : "opacity-0"
+          }`}
+        >
+          <span>
+            <b className="font-medium text-success">{ready}</b> {t("ready")}
+          </span>
+          <span>
+            <b className={blocked ? "font-medium text-error" : "font-medium text-on-surface"}>
+              {blocked}
+            </b>{" "}
+            {t("blocked")}
+          </span>
+          <span>
+            <b className="font-medium text-on-surface">{checks}</b> {t("checks")}
+          </span>
+          <span className="text-on-surface-faint">{t("period")}</span>
+        </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-[1fr_270px]">
-          <div className="flex min-h-[460px] min-w-0 flex-col gap-4 px-4 pt-5 pb-2">
-            {files.length > 0 ? (
-              <div className="flex flex-col gap-2.5">
-                <div className="font-data text-[10.5px] text-ink-faint uppercase tracking-[0.14em]">
-                  {t("you")}
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {files.map((name, index) => (
-                    <span
-                      key={name}
-                      style={{ animationDelay: `${index * 30}ms` }}
-                      className="chip-in rounded border border-line bg-surface-2 px-1.5 py-0.5 font-data text-[11px] text-ink-dim"
-                    >
-                      {name}
-                    </span>
-                  ))}
-                </div>
+        <div className="flex gap-2">
+          {(["en", "de"] as const).map((code) => (
+            <Ctrl
+              key={code}
+              pressed={locale === code}
+              onClick={() => setLocale(code)}
+              label={code.toUpperCase()}
+            />
+          ))}
+        </div>
+      </header>
+
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className="flex min-h-[560px] min-w-0 flex-1 flex-col gap-5 overflow-auto px-6 pt-6 pb-4">
+          {files.length > 0 ? (
+            <div className="flex flex-col gap-2.5">
+              <div className="font-semibold text-[12px] text-on-surface-faint uppercase tracking-[0.12em]">
+                {t("you")}
               </div>
-            ) : null}
-
-            {started ? (
-              <div className="flex flex-col gap-2.5">
-                <div className="font-data text-[10.5px] text-brass uppercase tracking-[0.14em]">
-                  {t("agent")}
-                </div>
-
-                {run.messages.map((message, index) => (
-                  <p key={`${index}-${message.slice(0, 12)}`} className="enter max-w-[66ch]">
-                    {message}
-                  </p>
+              <div className="flex flex-wrap gap-1.5">
+                {files.map((name, index) => (
+                  <span
+                    key={name}
+                    style={{ animationDelay: `${index * 30}ms` }}
+                    className="chip-in rounded-[8px] border border-outline-variant bg-surface-container px-2 py-1 text-[13px] text-on-surface-variant"
+                  >
+                    {name}
+                  </span>
                 ))}
-
-                {run.invoices.length > 0 ? <BatchTable invoices={run.invoices} t={t} /> : null}
-
-                {run.state === "awaiting-approval" ? (
-                  <ApprovalCard
-                    readyCount={run.readyIds.length}
-                    blockedCount={run.blockedIds.length}
-                    onApprove={approve}
-                    t={t}
-                  />
-                ) : null}
-
-                {run.error ? (
-                  <p className="max-w-[62ch] border-blocked border-l-2 pl-3 text-blocked">
-                    {run.error}
-                  </p>
-                ) : null}
               </div>
-            ) : null}
-          </div>
+            </div>
+          ) : null}
 
-          <CallRail calls={run.calls} live={busy} t={t} />
+          {started ? (
+            <div className="flex flex-col gap-2.5">
+              <div className="font-semibold text-[12px] text-secondary uppercase tracking-[0.12em]">
+                {t("agent")}
+              </div>
+
+              {run.messages.map((message, index) => (
+                <p
+                  key={`${index}-${message.slice(0, 12)}`}
+                  className="enter max-w-[78ch] text-[17px] text-on-surface leading-7"
+                >
+                  {message}
+                </p>
+              ))}
+
+              {run.invoices.length > 0 ? <BatchTable invoices={run.invoices} t={t} /> : null}
+
+              {run.state === "awaiting-approval" ? (
+                <ApprovalCard
+                  readyCount={run.readyIds.length}
+                  blockedCount={run.blockedIds.length}
+                  onApprove={approve}
+                  t={t}
+                />
+              ) : null}
+
+              {run.error ? (
+                <p className="max-w-[62ch] border-error border-l-2 pl-3 text-error">{run.error}</p>
+              ) : null}
+            </div>
+          ) : null}
         </div>
 
         <Composer onSubmit={(message) => begin(message)} onFiles={onFiles} disabled={busy} t={t} />
-      </section>
+      </div>
     </main>
   );
 }
@@ -168,10 +162,10 @@ function Ctrl({
       type="button"
       aria-pressed={pressed}
       onClick={onClick}
-      className={`pressable cursor-pointer rounded border px-2.5 py-1 font-data text-[11px] tracking-[0.06em] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-brass ${
+      className={`state-layer pressable cursor-pointer rounded-[8px] border px-3 py-1.5 font-semibold text-[13px] tracking-[0.04em] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-primary ${
         pressed
-          ? "border-brass-deep bg-brass/[0.08] text-brass"
-          : "border-line-strong text-ink-dim hover:border-ink-faint hover:text-ink"
+          ? "border-primary bg-primary-container text-on-primary-container"
+          : "border-outline text-on-surface-variant hover:text-on-surface"
       }`}
     >
       {label}
