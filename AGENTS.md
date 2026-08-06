@@ -6,15 +6,14 @@ This file is the source of truth — `CLAUDE.md` just points here so Claude Code
 ## Project
 
 - DMI Hackathon 2026, Seeburg Kreuzlingen. Kickoff and final presentation: 6-7 Aug 2026.
-- Challenge: Topic 3, provided by AWS. Brief was not yet published as of repo setup — see
-  `hackathon-seeburg-2026/challenges/topic-3-aws.md` in the guide repo once it drops, then fill in the
-  **Stack** section below.
+- Challenge: Topic 3, provided by AWS. Brief: `hackathon-seeburg-2026/challenges/topic-3-aws.md` in
+  the guide repo.
 - Repo naming, `hackmaster-dmi` read-only collaborator, and submission rules live in the guide repo's
   `checklists/members.md` — do not duplicate them here, just follow them.
 
 ## Stack
 
-TBD — update this section once the AWS challenge brief is published and the team picks a stack.
+TBD — fill in once the team picks one.
 
 ## Git workflow
 
