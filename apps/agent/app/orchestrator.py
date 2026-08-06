@@ -15,6 +15,7 @@ arrival, so an unpaced flush collapses it into one frame. Emitting one rule per
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import AsyncIterator, Literal
@@ -62,11 +63,20 @@ class Run:
 
 
 class RunStore:
-    """In-memory. A demo has one run at a time and no persistence requirement."""
+    """In-memory. A demo has one run at a time and no persistence requirement.
+
+    The sequence base does not start at 1. Restarting the process would otherwise
+    replay references already parked in SAP - which is a shared system, so those
+    references exist forever and rule 16 blocks the whole batch. Seeding from the
+    clock means a restart cannot collide with an earlier session.
+
+    The reference is `<12-digit account>-<n>` and SAP caps it at 16 characters,
+    so n has three digits to work with.
+    """
 
     def __init__(self) -> None:
         self._runs: dict[str, Run] = {}
-        self._next_sequence = 1
+        self._next_sequence = int(time.time()) % 900 + 1
 
     def create(self, run_id: str, account: str, locale: str) -> Run:
         # Advance past whatever the previous run consumed, so re-runs never
