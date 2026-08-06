@@ -83,7 +83,10 @@ export function SendIcon({ className }: IconProps) {
 export function ShieldIcon({ className }: IconProps) {
   return (
     <Svg className={className}>
-      <path d="M8 1.8 13.4 3.9v4c0 3.2-2.2 5.4-5.4 6.3-3.2-.9-5.4-3.1-5.4-6.3v-4Z" strokeWidth="1.4" />
+      <path
+        d="M8 1.8 13.4 3.9v4c0 3.2-2.2 5.4-5.4 6.3-3.2-.9-5.4-3.1-5.4-6.3v-4Z"
+        strokeWidth="1.4"
+      />
       <path d="M5.8 7.9 7.4 9.5 10.4 6.3" strokeWidth="1.4" />
     </Svg>
   );
@@ -93,7 +96,10 @@ export function UploadIcon({ className }: IconProps) {
   return (
     <Svg className={className}>
       <path d="M8 11V2.6M4.6 6 8 2.6 11.4 6" strokeWidth="1.5" />
-      <path d="M2.4 10.6v1.6a1.4 1.4 0 0 0 1.4 1.4h8.4a1.4 1.4 0 0 0 1.4-1.4v-1.6" strokeWidth="1.5" />
+      <path
+        d="M2.4 10.6v1.6a1.4 1.4 0 0 0 1.4 1.4h8.4a1.4 1.4 0 0 0 1.4-1.4v-1.6"
+        strokeWidth="1.5"
+      />
     </Svg>
   );
 }
@@ -101,7 +107,10 @@ export function UploadIcon({ className }: IconProps) {
 export function BatchIcon({ className }: IconProps) {
   return (
     <Svg className={className}>
-      <path d="M3.4 2.4h6l3.2 3.2v8a.6.6 0 0 1-.6.6H3.4a.6.6 0 0 1-.6-.6V3a.6.6 0 0 1 .6-.6Z" strokeWidth="1.5" />
+      <path
+        d="M3.4 2.4h6l3.2 3.2v8a.6.6 0 0 1-.6.6H3.4a.6.6 0 0 1-.6-.6V3a.6.6 0 0 1 .6-.6Z"
+        strokeWidth="1.5"
+      />
       <path d="M9.2 2.6v3.2h3.2M5.6 9h4.8M5.6 11.4h3.2" strokeWidth="1.5" />
     </Svg>
   );

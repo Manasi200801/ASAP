@@ -34,8 +34,7 @@ function formatDuration(ms: number) {
 
 function StatusIcon({ status }: { status: InvoiceRow["status"] }) {
   if (status === "pending") return <Spinner className="h-3.5 w-3.5" />;
-  if (status === "blocked" || status === "parkError")
-    return <CrossIcon className="h-3.5 w-3.5" />;
+  if (status === "blocked" || status === "parkError") return <CrossIcon className="h-3.5 w-3.5" />;
   return <CheckIcon className="h-3.5 w-3.5" />;
 }
 

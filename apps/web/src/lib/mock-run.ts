@@ -288,10 +288,7 @@ export async function* mockPost(runId: string, readyIds: string[]): AsyncGenerat
  * answers from the same scripted facts the table is showing, which keeps the
  * fallback honest: it never claims something the visible run does not support.
  */
-export async function* mockAnswer(
-  question: string,
-  hasRun: boolean,
-): AsyncGenerator<RunEvent> {
+export async function* mockAnswer(question: string, hasRun: boolean): AsyncGenerator<RunEvent> {
   const asked = question.toLowerCase();
   const blocked = asked.includes("9999");
   const greeting = /^\s*(hi|hey|hello|yo|hallo|servus|guten tag)\b/.test(asked);
