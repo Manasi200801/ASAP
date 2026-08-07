@@ -222,6 +222,8 @@ The Cognito client id and secret are deliberately absent — they are read at ru
 | `MOCK` | `1` forces the mock even when `AGENT_ENDPOINT` is set |
 | `AWS_REGION` | Used by `/api/upload` to presign |
 | `INVOICE_BUCKET` | Used by `/api/upload` to presign |
+| `SOP_BUCKET` | Bucket the `/sops` page manages — list, read, write SOP files |
+| `SOP_KNOWLEDGE_BASE_ID` | Knowledge base the `/sops` page's "Sync knowledge base" button re-indexes |
 
 The invoice bucket needs a CORS rule allowing `PUT` from your origin or the browser blocks the upload — the workshop stack does not create one. The minimum rule is in `contract/events.md`. It is already configured for `http://localhost:3000`, `http://127.0.0.1:3000` and `https://*.vercel.app`.
 

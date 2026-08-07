@@ -32,12 +32,14 @@ src/
     api/chat/          proxies to the agent, or replays the mock
     api/approve/       the only route that leads to a SAP write
     api/upload/        presigns S3 PUTs so PDFs never touch this server
+    api/sops/          list/read/write SOP files in S3, trigger/poll KB sync
   components/
     batch-table.tsx    one row per invoice, status derived live
     rule-chips.tsx     the evidence trail: rule vs agent, reasoning, citation
     call-rail.tsx      SAP calls as they happen
     approval-card.tsx  the single human gate
     composer.tsx       upload and ask
+    sops/               SOP manager: list, editor, upload, KB sync bar
   lib/
     events.ts          Zod mirror of the contract
     use-run.ts         the reducer over the event stream
@@ -74,6 +76,8 @@ a lookup, not a routing library.
 | `MOCK=1` | forces the mock even when `AGENT_ENDPOINT` is set |
 | `AGENT_TOKEN` | sent as a bearer token, for a deployed orchestrator |
 | `INVOICE_BUCKET`, `AWS_REGION` | used by `/api/upload` to presign |
+| `SOP_BUCKET` | Bucket the `/sops` page reads and writes |
+| `SOP_KNOWLEDGE_BASE_ID` | Knowledge base re-indexed by the "Sync knowledge base" action |
 
 `npm run dev` from the repo root derives `AGENT_ENDPOINT` from `AGENT_PORT`, so
 one variable moves both halves.
