@@ -2,25 +2,31 @@
 
 Build an AI-powered invoice processing agent that allows business users to upload supplier invoices, validate them against live SAP S/4HANA data, and post approved invoices automatically. The solution should support batch processing, robust business-rule validation, clear exception reporting, and a single human approval step before anything is posted.
 
-## Demo
-
-[Link to demo video or live demo - hosted on YouTube/Vimeo, NOT in the repo]
-
 ## Screenshots
 
-[Add 2-3 screenshots showing key features]
+**Command Center** — the landing screen: what the product does, and the one thing worth doing next.
 
-## Problem Statement
+![Command Center](screenshots/landing_page.png)
 
-**Challenge:** AWS Autonomous SAP Accounts Payable
+**Validation Queue** — the original document next to the extracted fields, each one checked against SAP live, with confidence and reasoning shown inline.
 
-Build an AI-powered invoice processing agent that allows business users to upload supplier invoices, validate them against live SAP S/4HANA data, and post approved invoices automatically. The solution should support batch processing, robust business-rule validation, clear exception reporting, and a single human approval step before anything is posted.
+![Validation Queue](screenshots/evaluation_page.png)
+
+**Approval Workflow** — the single approval gate: what's ready to park, what's blocked and why, grouped separately.
+
+![Approval Workflow](screenshots/parking_page.png)
+
+**Agent chat** — ad hoc questions about a run, and the generated actions (like a note to the buyer) for a blocked invoice.
+
+![Agent chat](screenshots/chatbot.png)
 
 ## Solution
 
 A batch of supplier invoice PDFs is uploaded straight from the browser to S3 via presigned URLs. A Python orchestrator extracts each invoice with Bedrock, checks it against live SAP S/4HANA data through an MCP server, and streams every step back to the UI as it happens — each invoice, each rule, each SAP call.
 
 Sixteen validation rules run per invoice. Thirteen are deterministic comparisons in code; three need judgment and are decided by a model that states its reasoning and, for price tolerance, cites the AP policy document it consulted. Every rule chip in the UI records whether code or a model decided it, and on what evidence.
+
+The UI is a workspace, not a single scrolling page: a Command Center for run-level stats, a Validation Queue that puts the original document side by side with the extracted-vs-SAP field comparison (real document preview, pulled from S3 through a presigned GET — never a bundled copy), an Approval Workflow for the parking decision, and a session History of completed runs. A floating chat panel sits alongside all of it for ad hoc questions ("why was FPL-9999 blocked?") without leaving the screen you're on.
 
 Nothing reaches SAP without a human. The run stops at `awaiting-approval` and only a separate `/approve` request writes. Approved invoices are parked as reversible drafts (`SupplierInvoiceStatus: "A"`), never posted for payment.
 
@@ -33,8 +39,11 @@ The full contract between the two halves — every event, every rule, every envi
 - 16 validation rules per invoice: 13 deterministic, 3 agent-decided, each one showing its evidence
 - Rule 9 (price tolerance) reads the AP standard operating procedures from a Bedrock Knowledge Base and cites the document
 - Live SAP call rail — every OData read through the MCP server is streamed to the UI as it happens
-- Exception reporting in plain business language: headline, business impact, and where possible a concrete correction proposal
+- Validation Queue with a real side-by-side view: the original PDF (presigned straight from S3) next to the extracted fields, each one checked against SAP
+- Exception reporting in plain business language: headline, business impact, and where possible a concrete correction proposal, plus a notification bell that tracks unseen exceptions across the batch
 - A single, structural human approval gate: approval is a separate HTTP request, and the state machine rejects it unless the run is awaiting approval
+- A `/sops` page to read, edit and upload the AP policy documents that rule 9 consults, with a one-click re-index of the knowledge base
+- Session history of completed runs, and an agent chat panel for questions that don't fit the structured flow
 - Full fake/sample backends, so the whole flow runs with no AWS credentials at all
 
 ## Tech Stack
@@ -47,7 +56,7 @@ The full contract between the two halves — every event, every rule, every envi
 | AI/ML | Amazon Bedrock, `us.anthropic.claude-sonnet-4-6` (extraction + the 3 agent-decided rules) |
 | Retrieval | Bedrock Knowledge Bases on S3 Vectors, `amazon.titan-embed-text-v2:0` |
 | SAP access | AWS SAP MCP Server on Bedrock AgentCore Runtime (behind Cognito) to S/4HANA OData |
-| Storage | Amazon S3 (invoice PDFs, presigned PUT) |
+| Storage | Amazon S3 (invoice PDFs, presigned PUT for upload and presigned GET for preview) |
 | Transport | Server-Sent Events for both run streams |
 
 Sonnet 5 and Opus 5 are listed by `list-inference-profiles` on the workshop account but Converse returns `AccessDenied`; 4.6 is the newest that actually works there.
@@ -62,6 +71,9 @@ browser
   |  1. POST /api/upload -> presigned PUT URLs
   |  2. PUT each PDF directly to S3            s3://516359819848-invoice/runs/<runId>/
   |  3. POST /api/chat, POST /api/approve
+  |  4. GET  /api/preview -> presigned GET, for the Validation Queue's
+  |          document pane (runs/<runId>/<file>, or the bucket root for
+  |          the sample batch's own fpl-invoice-0{1..6}.pdf originals)
   v
 apps/web  (Next.js 15 route handlers, SSE passthrough)
   |
@@ -226,8 +238,9 @@ The Cognito client id and secret are deliberately absent — they are read at ru
 | `AGENT_ENDPOINT` | Where the orchestrator is. Unset means the scripted mock. `npm run dev` sets this for you |
 | `AGENT_TOKEN` | Only if the orchestrator sits behind an authenticating gateway. Not needed locally |
 | `MOCK` | `1` forces the mock even when `AGENT_ENDPOINT` is set |
-| `AWS_REGION` | Used by `/api/upload` to presign |
-| `INVOICE_BUCKET` | Used by `/api/upload` to presign |
+| `AWS_PROFILE` | `workshop`. Without it the default credential chain silently presigns against whichever account is `[default]` on your machine — presigning is local arithmetic, so it "succeeds" either way, and S3 only refuses the PUT or GET afterward, which reads as a broken upload/preview rather than the wrong account |
+| `AWS_REGION` | Used by `/api/upload` and `/api/preview` to presign |
+| `INVOICE_BUCKET` | Used by `/api/upload` (PUT) and `/api/preview` (GET) to presign |
 | `SOP_BUCKET` | Bucket the `/sops` page manages — list, read, write SOP files |
 | `SOP_KNOWLEDGE_BASE_ID` | Knowledge base the `/sops` page's "Sync knowledge base" button re-indexes |
 
@@ -247,7 +260,7 @@ npm run build
 
 ```bash
 # agent, from apps/agent (with the venv active)
-python tests/test_run.py     # 6 checks, no test framework needed
+python tests/test_run.py     # 17 checks, no test framework needed
 ```
 
 The agent checks run against the fake SAP and judge backends, so they need no AWS credentials and stay green whether or not Lab 05 is deployed.
@@ -273,13 +286,6 @@ Needs `boto3 >= 1.40` for the `s3vectors` client. Re-running is safe; existing r
 | Shivam Suchak | Developer | @username |
 | Siddharth Prakash Pai | Developer | SiddharthPrakashPai |
 | Sreehari Pradeep Kumar | Developer | sreehari59 |
-
-## Results
-
-Generated outputs for the example prompts are in the /result/ folder:
-
-- result/example-1/ - Output for Example Prompt 1
-- result/example-2/ - Output for Example Prompt 2
 
 ## Acknowledgments
 
