@@ -99,6 +99,7 @@
   "originalDocument": "Original document",
   "previewUnavailable": "No preview available for this document.",
   "extractedVsSap": "Extracted data vs SAP",
+  "hoverToHighlight": "Hover a field to find it on the document",
   "confidence": "Confidence: {pct}%",
   "aiInsight": "AI insight",
   "allChecks": "All 16 checks",

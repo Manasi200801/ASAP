@@ -4,6 +4,7 @@ import type { InvoiceRow, RuleEvent } from "@/lib/events";
 import type { Translate } from "@/lib/i18n";
 import { useEffect, useState } from "react";
 import { CheckIcon, CrossIcon, DocumentIcon, JudgedIcon } from "./icons";
+import { PdfHighlightPreview } from "./pdf-highlight-preview";
 import { RuleChips } from "./rule-chips";
 import { Spinner } from "./spinner";
 
@@ -108,20 +109,35 @@ function FieldRow({
   value,
   rule,
   lowConfidence,
+  highlighted,
+  onHover,
   t,
 }: {
   label: string;
   value: string | undefined;
   rule: RuleEvent | undefined;
   lowConfidence: boolean;
+  highlighted: boolean;
+  onHover: (on: boolean) => void;
   t: Translate;
 }) {
   const failed = rule?.status === "fail";
   const judged = rule?.decidedBy === "agent" && rule.status === "pass";
 
   return (
-    <div
-      className={`flex flex-col gap-1 rounded-[8px] px-3 py-2.5 ${failed ? "border border-error/40 bg-error/[0.06]" : ""}`}
+    // A <button>, not a <div> with a tabIndex hack - it does nothing on click,
+    // but hovering or tabbing to it is a real interaction (it drives the
+    // document highlight), so it earns a real interactive element rather than
+    // one taped on with an ARIA/tabIndex override.
+    <button
+      type="button"
+      onMouseEnter={() => onHover(true)}
+      onMouseLeave={() => onHover(false)}
+      onFocus={() => onHover(true)}
+      onBlur={() => onHover(false)}
+      className={`flex w-full cursor-default flex-col gap-1 rounded-[8px] px-3 py-2.5 text-left transition-colors ${
+        failed ? "border border-error/40 bg-error/[0.06]" : ""
+      } ${highlighted ? "bg-primary/[0.08]" : ""}`}
     >
       <div className="flex items-center justify-between gap-3">
         <span className="text-[13px] text-on-surface-faint">{label}</span>
@@ -148,7 +164,7 @@ function FieldRow({
       ) : judged && rule?.reasoning ? (
         <p className="text-[13px] text-secondary leading-5">{rule.reasoning}</p>
       ) : null}
-    </div>
+    </button>
   );
 }
 
@@ -194,6 +210,18 @@ export function ValidationQueueView({
       : null;
 
   const previewUrl = selected ? previewUrls[selected.invoiceId] : undefined;
+
+  // Which field row the pointer (or keyboard focus) is currently on - the
+  // document highlights that field's own extracted value and nothing else.
+  // Cleared whenever the selected invoice changes, so a highlight never
+  // survives onto a different document than the one it was hovered on.
+  const [hoveredKey, setHoveredKey] = useState<keyof InvoiceRow | null>(null);
+  // The dependency exists purely to trigger this, not to be read by it.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: see above
+  useEffect(() => {
+    setHoveredKey(null);
+  }, [selected?.invoiceId]);
+  const highlightQuery = hoveredKey && selected ? String(selected[hoveredKey] ?? "") || null : null;
 
   return (
     <div className="flex min-h-0 flex-1">
@@ -247,16 +275,16 @@ export function ValidationQueueView({
               <div className="flex min-h-[280px] flex-1 overflow-hidden rounded-[10px] border border-outline-variant bg-surface">
                 {previewUrl ? (
                   isPdf(selected.file) ? (
-                    // `<img>` silently renders nothing for a PDF blob - the browser's own
-                    // PDF viewer is what actually shows it, and only an iframe/embed can
-                    // host that. `h-full` (not a fixed px height) is what makes it fill
-                    // the pane instead of sitting centred in a taller box - the sibling
-                    // "Extracted vs SAP" column is usually taller, and a grid row
-                    // stretches both columns to match it.
-                    <iframe
-                      src={previewUrl}
-                      title={selected.file}
-                      className="h-full w-full border-0"
+                    // Rendered ourselves (canvas + pdf.js's own text layer) rather than
+                    // handed to the browser's built-in viewer via <iframe> - that viewer is
+                    // a black box from the outside, and there is no way to draw a highlight
+                    // on top of a PDF page it is rendering in its own document. This is what
+                    // lets hovering a field on the right actually point at the same text on
+                    // the document itself.
+                    <PdfHighlightPreview
+                      url={previewUrl}
+                      fileName={selected.file}
+                      highlightQuery={highlightQuery}
                     />
                   ) : (
                     // A blob: URL from an in-memory File, never a remote asset - nothing
@@ -290,6 +318,9 @@ export function ValidationQueueView({
                   </span>
                 ) : null}
               </div>
+              {previewUrl && isPdf(selected.file) ? (
+                <p className="-mt-1 text-[12px] text-on-surface-faint">{t("hoverToHighlight")}</p>
+              ) : null}
 
               <div className="flex flex-col gap-1.5">
                 {FIELD_ROWS.map(({ key, labelKey, ruleIds }) => {
@@ -304,6 +335,8 @@ export function ValidationQueueView({
                       value={String(value)}
                       rule={ruleFor(selected.rules, ruleIds)}
                       lowConfidence={confidence !== undefined && confidence < 0.8}
+                      highlighted={hoveredKey === key}
+                      onHover={(on) => setHoveredKey(on ? key : null)}
                       t={t}
                     />
                   );
