@@ -461,6 +461,39 @@ body {
   transform: scale(0.97);
 }
 
+/* ---- PDF text layer: pdf.js positions real text over the canvas render, this
+   is only what makes that text invisible-but-selectable and what makes a
+   matched span visible again as a highlight. Hand-copied from pdf.js's own
+   `web/pdf_viewer.css` (`.textLayer` / `.textLayer span`) rather than
+   importing the whole viewer stylesheet, which ships toolbar and thumbnail
+   rules this app never uses. ---- */
+
+.pdf-text-layer {
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+  line-height: 1;
+  text-align: initial;
+  transform-origin: 0 0;
+}
+
+.pdf-text-layer span {
+  position: absolute;
+  color: transparent;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+}
+
+.pdf-highlight {
+  /* Same accent used everywhere else something is "the one you're looking at"
+     - the active sidebar item, the selected queue row - not a colour invented
+     for this one purpose. */
+  background: color-mix(in srgb, var(--color-primary) 45%, transparent);
+  border-radius: 3px;
+  transition: background calc(140ms * var(--m)) var(--ease-out);
+}
+
 /* ---- indeterminate linear progress (active progress = primary) ---- */
 
 @keyframes progress-indeterminate {

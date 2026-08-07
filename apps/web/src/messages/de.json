@@ -99,6 +99,7 @@
   "originalDocument": "Originaldokument",
   "previewUnavailable": "Für dieses Dokument ist keine Vorschau verfügbar.",
   "extractedVsSap": "Extrahierte Daten vs. SAP",
+  "hoverToHighlight": "Feld markieren, um es im Dokument zu finden",
   "confidence": "Konfidenz: {pct}%",
   "aiInsight": "KI-Hinweis",
   "allChecks": "Alle 16 Prüfungen",
