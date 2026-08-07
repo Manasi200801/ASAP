@@ -186,7 +186,15 @@ async def validate_run(
         )
         po = await sap.purchase_order(inv.purchase_order, inv.purchase_order_item)
         gr = await sap.goods_receipt(inv.purchase_order, inv.purchase_order_item) if po else None
-        inv.existing_reference = await sap.reference_exists(inv.vendor, inv.reference)
+
+        # SAP's own id for this supplier, learned here and used for both the
+        # duplicate lookup below and the eventual write. Asking about the number
+        # printed on the invoice searches for a party SAP has never heard of, so
+        # the duplicate check could only ever come back clean.
+        if po and po.supplier:
+            inv.sap_supplier = po.supplier
+
+        inv.existing_reference = await sap.reference_exists(inv.party(), inv.reference)
 
         deterministic = run_deterministic(inv, po, gr)
         judged = {
@@ -306,14 +314,20 @@ def odata_date(day: str) -> str:
 
 
 def park_payload(inv: Extracted, index: int, run: Run) -> dict:
-    """The deep insert Lab 06 specifies. Status A parks; it never posts for payment."""
+    """The deep insert Lab 06 specifies. Status A parks; it never posts for payment.
+
+    `InvoicingParty` is SAP's supplier id, not the number printed on the invoice.
+    Every document in this system carries an id in SAP's own form; addressing a
+    write to the printed legacy number gets it rejected with an OData error body
+    rather than a document.
+    """
     posting = odata_date(inv.posting_date)
     return {
         "CompanyCode": inv.company_code,
         "DocumentDate": posting,
         "PostingDate": posting,
         "SupplierInvoiceIDByInvcgParty": inv.reference,
-        "InvoicingParty": inv.vendor,
+        "InvoicingParty": inv.party(),
         "DocumentCurrency": inv.currency,
         "InvoiceGrossAmount": inv.gross_amount,
         "SupplierInvoiceStatus": "A",

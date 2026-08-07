@@ -7,6 +7,7 @@ Or bare:   python apps/agent/tests/test_run.py
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from pathlib import Path
 
@@ -15,9 +16,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app import events as ev  # noqa: E402
 from app.extract import sample_batch  # noqa: E402
 from app.judge import FakeJudge  # noqa: E402
-from app.orchestrator import POSTING_DATE, RunStore, park_payload, post_run, validate_run  # noqa: E402
+from app.orchestrator import (  # noqa: E402
+    POSTING_DATE,
+    Run,
+    RunStore,
+    park_payload,
+    post_run,
+    validate_run,
+)
 from app.rules import AGENT_RULE_IDS, RULE_COUNT, run_deterministic  # noqa: E402
-from app.sap import FakeSap, SapError  # noqa: E402
+from app.sap import FakeSap, McpSap, SapError  # noqa: E402
 from app.storage import FakeMover, blocked_bucket, processed_bucket, upload_bucket  # noqa: E402
 
 
@@ -224,6 +232,103 @@ def test_sample_mode_files_nothing() -> None:
         return mover
 
     assert asyncio.run(run_it()).moves == []
+
+
+def test_the_write_is_addressed_to_saps_supplier_id_not_the_printed_one() -> None:
+    """The invoice prints 17401710; SAP knows the party as BP1710 and rejects the former.
+
+    Rule 4 judging the two equivalent settles validation. It says nothing about
+    which id the write has to carry, and using the printed one is why the park
+    came back with an OData error instead of a document.
+    """
+
+    async def run_it() -> Run:
+        store, sap, judge = RunStore(), FakeSap(), FakeJudge()
+        run = store.create("r_party", "516359819848", "en")
+        await collect(validate_run(run, [], sap, judge))
+        return run
+
+    run = asyncio.run(run_it())
+    inv = next(i for i in run.invoices if i.invoice_id == "FPL-1563")
+
+    assert inv.vendor == "17401710", "the invoice still records what was printed on it"
+    assert inv.sap_supplier == "BP1710", "and what SAP calls the same party"
+    assert park_payload(inv, 0, run)["InvoicingParty"] == "BP1710"
+
+
+def test_the_duplicate_check_asks_about_the_party_sap_knows() -> None:
+    """Asking under the printed number searches for a supplier SAP never heard of.
+
+    Rule 16 could only ever come back clean, which is a false pass on the one
+    check that stops a batch being parked twice.
+    """
+    asked: dict[str, str] = {}
+
+    class WatchfulSap(FakeSap):
+        async def reference_exists(self, vendor: str, reference: str):
+            asked[reference] = vendor
+            return await super().reference_exists(vendor, reference)
+
+    async def run_it() -> Run:
+        store, judge = RunStore(), FakeJudge()
+        run = store.create("r_dup", "516359819848", "en")
+        await collect(validate_run(run, [], WatchfulSap(), judge))
+        return run
+
+    run = asyncio.run(run_it())
+
+    for inv in run.invoices:
+        if inv.sap_supplier:
+            assert asked[inv.reference] == inv.sap_supplier, (
+                f"{inv.invoice_id} was looked up as {asked[inv.reference]}, "
+                f"not SAP's {inv.sap_supplier}"
+            )
+        else:
+            # FPL-9999's purchase order does not exist, so there is no SAP id to
+            # learn. The printed number is all we have - and rule 1 has already
+            # blocked the invoice, so the lookup cannot change the outcome.
+            assert asked[inv.reference] == inv.vendor
+
+    parties = {inv.invoice_id: asked[inv.reference] for inv in run.invoices}
+    assert parties["FPL-1563"] == "BP1710", parties
+
+
+def test_sap_rejection_reaches_the_user_in_saps_own_words() -> None:
+    """A rejected write is a 200 carrying an OData error body, not a transport failure.
+
+    Read as a document it just has no `d`, which is how a real complaint became
+    "SAP did not return a document number" and cost a whole re-run to learn
+    nothing.
+    """
+    body = {
+        "error": {
+            "code": "/IWBEP/CM_MGW_RT/020",
+            "message": {"lang": "en", "value": "An exception was raised."},
+            "innererror": {
+                "errordetails": [
+                    {"message": "An exception was raised."},
+                    {"message": "Tax code V0 does not exist in company code 1010"},
+                ]
+            },
+        }
+    }
+    framed = f"data: {json.dumps({'result': {'content': [{'text': json.dumps(body)}]}})}"
+
+    try:
+        McpSap._unwrap(framed)
+    except SapError as error:
+        message = str(error)
+    else:
+        raise AssertionError("an OData error body must raise")
+
+    assert "Tax code V0 does not exist" in message, message
+    assert message.count("An exception was raised.") == 1, f"headline repeated: {message}"
+
+
+def test_a_successful_write_is_still_returned_untouched() -> None:
+    body = {"d": {"SupplierInvoice": "5100001500", "FiscalYear": "2025"}}
+    framed = f"data: {json.dumps({'result': {'content': [{'text': json.dumps(body)}]}})}"
+    assert McpSap._unwrap(framed) == body
 
 
 if __name__ == "__main__":

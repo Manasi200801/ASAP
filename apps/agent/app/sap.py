@@ -107,6 +107,46 @@ class SapError(RuntimeError):
     """SAP refused the call. Carries a message fit to show a person."""
 
 
+def _odata_error(document: dict) -> str | None:
+    """Dig SAP's own words out of an OData V2 error body.
+
+    Shape:
+
+        {"error": {"code": "...",
+                   "message": {"lang": "en", "value": "the headline"},
+                   "innererror": {"errordetails": [{"message": "the specifics"}]}}}
+
+    The headline is often generic ("An exception was raised") while
+    `errordetails` carries the line that actually says what is wrong, so both are
+    reported. Returns None when the document is not an error at all.
+    """
+    error = document.get("error")
+    if not isinstance(error, dict):
+        return None
+
+    message = error.get("message")
+    if isinstance(message, dict):
+        headline = message.get("value", "")
+    else:
+        headline = message if isinstance(message, str) else ""
+
+    details: list[str] = []
+    inner = error.get("innererror")
+    if isinstance(inner, dict):
+        for detail in inner.get("errordetails") or []:
+            if not isinstance(detail, dict):
+                continue
+            text = detail.get("message", "")
+            # SAP repeats the headline as the first detail more often than not.
+            if text and text != headline and text not in details:
+                details.append(text)
+
+    parts = [p for p in [headline, *details] if p]
+    if not parts and error.get("code"):
+        return f"SAP rejected the write ({error['code']})."
+    return " ".join(parts) or None
+
+
 class McpSap:
     """Real SAP, through the MCP server running on Bedrock AgentCore.
 
@@ -242,10 +282,20 @@ class McpSap:
             raise SapError(text or "SAP rejected the call.")
 
         try:
-            return json.loads(text)
+            document = json.loads(text)
         except json.JSONDecodeError:
             # Some writes answer with a bare status line rather than a document.
             return {"raw": text}
+
+        # A rejected write comes back as a 200 carrying an OData error body, not
+        # as a transport failure. Read as a document it simply has no `d`, which
+        # is how a real complaint - "tax code V0 is not defined for country DE" -
+        # turned into "SAP did not return a document number."
+        complaint = _odata_error(document)
+        if complaint:
+            raise SapError(complaint)
+
+        return document
 
     async def _get(self, url: str) -> dict:
         return await asyncio.to_thread(self._invoke, url, "GET", None)
@@ -357,7 +407,16 @@ class McpSap:
 
         entity = self._entity(document)
         if entity is None or not entity.get("SupplierInvoice"):
-            raise SapError(document.get("raw") or "SAP did not return a document number.")
+            # `_unwrap` already raises on a recognised OData error, so reaching
+            # here means a shape nobody anticipated. Log it whole - a generic
+            # sentence with the evidence thrown away costs an entire re-run to
+            # learn anything, which is exactly what happened.
+            log.error("park returned no document number: %s", json.dumps(document)[:2000])
+            raise SapError(
+                document.get("raw")
+                or "SAP accepted the call but returned no document number. "
+                "The agent log has the full response."
+            )
 
         return Parked(
             sap_document=entity["SupplierInvoice"],

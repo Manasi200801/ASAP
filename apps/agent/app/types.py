@@ -40,6 +40,17 @@ class Extracted:
     posting_date: str = ""
     existing_reference: str | None = None
 
+    # The supplier id SAP itself uses, taken from the purchase order. The invoice
+    # prints the legacy vendor number (17401710); S/4HANA knows the same party as
+    # a Business Partner (BP1710) and rejects a write addressed to the printed
+    # one. Rule 4 judges the two equivalent, which settles validation but says
+    # nothing about which id the write has to carry.
+    sap_supplier: str = ""
+
+    def party(self) -> str:
+        """Who to address SAP as. Falls back to the printed number."""
+        return self.sap_supplier or self.vendor
+
     confidence: dict[str, float] = field(default_factory=dict)
 
 
