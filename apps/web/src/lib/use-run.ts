@@ -77,7 +77,19 @@ function apply(run: Run, event: RunEvent): Run {
     case "invoice":
       return {
         ...run,
-        invoices: [...run.invoices, { ...event, rules: [], status: "pending" }],
+        // The clock starts when the invoice is announced, because that is when
+        // the orchestrator starts work on it: the SAP lookups and judge calls
+        // for all six run concurrently, launched before any row appears.
+        //
+        // Timing from the first tool call instead made the first row wear the
+        // whole batch's network cost - 9 seconds - while the other five, whose
+        // work had finished during that same window, each read "<1s". Six
+        // invoices checked in parallel is the true story, and it is the better
+        // one; one slow invoice followed by five instant ones is neither.
+        invoices: [
+          ...run.invoices,
+          { ...event, rules: [], status: "pending", startedAt: Date.now() },
+        ],
       };
 
     case "tool-call": {
@@ -87,15 +99,6 @@ function apply(run: Run, event: RunEvent): Run {
       return {
         ...run,
         calls,
-        // Started on this invoice's first tool call, not its first rule. The
-        // orchestrator does the SAP lookups and every judge call for an invoice
-        // *before* it yields a single rule event, then emits all sixteen back to
-        // back - timing from the first rule would measure only that final burst
-        // and miss the real wait entirely. The tool call fires the moment the
-        // orchestrator actually starts on this invoice.
-        invoices: run.invoices.map((i) =>
-          i.invoiceId === event.invoiceId ? { ...i, startedAt: i.startedAt ?? Date.now() } : i,
-        ),
       };
     }
 

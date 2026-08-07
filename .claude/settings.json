@@ -23,7 +23,10 @@
       "Bash(npx vitest *)",
       "Bash(lsof -ti:3411 -sTCP:LISTEN)",
       "Bash(xargs -r kill)",
-      "Bash(npx next *)"
+      "Bash(npx next *)",
+      "Bash(git status *)",
+      "Bash(node -e \"JSON.parse\\(require\\('fs'\\).readFileSync\\('src/messages/en.json','utf8'\\)\\); JSON.parse\\(require\\('fs'\\).readFileSync\\('src/messages/de.json','utf8'\\)\\); console.log\\('OK'\\)\")",
+      "Bash(git add *)"
     ],
     "additionalDirectories": [
       "/private/tmp/claude-501/-Users-sidpai-Desktop-seeburg-aug-26-strike/525a0a8a-12c6-abhi26-strike"

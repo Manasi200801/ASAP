@@ -1,7 +1,8 @@
 "use client";
 
 import type { MessageKey, Translate } from "@/lib/i18n";
-import { BatchIcon, GridIcon, HistoryIcon, QueueIcon, WorkflowIcon } from "./icons";
+import Link from "next/link";
+import { BatchIcon, DocumentIcon, GridIcon, HistoryIcon, QueueIcon, WorkflowIcon } from "./icons";
 
 export type View = "command" | "upload" | "queue" | "approval" | "history";
 
@@ -93,6 +94,19 @@ export function Sidebar({
           );
         })}
       </nav>
+
+      {/* The policy tolerance rule 9 reads against - a real page, not a client
+          view, so it gets a plain link rather than a spot in the view-switch
+          above. Kept in the persistent rail rather than buried in a menu,
+          because "the tolerance is a document you can edit, and the agent
+          re-reads it" is the point - not a settings page nobody opens. */}
+      <Link
+        href="/sops"
+        className="state-layer pressable mt-auto flex min-h-[42px] cursor-pointer items-center gap-3 rounded-[10px] px-3 text-[15px] text-on-surface-variant transition-colors hover:bg-surface-container hover:text-on-surface"
+      >
+        <DocumentIcon className="h-[18px] w-[18px] flex-none" />
+        <span className="min-w-0 flex-1 truncate text-left">{t("sopsLink")}</span>
+      </Link>
     </aside>
   );
 }

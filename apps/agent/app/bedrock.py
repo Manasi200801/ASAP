@@ -32,6 +32,25 @@ class JudgementError(RuntimeError):
     """The model did not answer in a usable shape."""
 
 
+def document_name(name: str) -> str:
+    """A file name Converse will accept.
+
+    Bedrock allows letters, digits, whitespace, hyphens, parentheses and square
+    brackets, and rejects the whole request if any run of whitespace is longer
+    than one character. Both halves matter: an earlier version replaced every
+    other character with a space, so `file (36).pdf` became `file  36 pdf` - the
+    substitution manufactured the exact double space the rule forbids, and a
+    browser's default download name was enough to fail a batch.
+
+    Note what this does NOT do: rename the file anywhere else. The key in S3 and
+    the name shown to the user keep their punctuation; this is only what Converse
+    is told the attachment is called.
+    """
+    kept = re.sub(r"[^A-Za-z0-9 \-()\[\]]+", " ", name)
+    collapsed = re.sub(r"\s+", " ", kept).strip()
+    return collapsed[:60].strip() or "invoice"
+
+
 def model_id() -> str:
     return os.getenv("BEDROCK_MODEL_ID", DEFAULT_MODEL)
 
@@ -262,8 +281,7 @@ def ask_json(system: str, prompt: str, document: bytes | None = None, name: str 
             content.append(
                 {
                     "document": {
-                        # Converse rejects most punctuation in document names.
-                        "name": re.sub(r"[^A-Za-z0-9 ]+", " ", name)[:60] or "invoice",
+                        "name": document_name(name),
                         "format": "pdf",
                         "source": {"bytes": document},
                     }

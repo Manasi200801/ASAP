@@ -50,13 +50,19 @@ export function ApprovalWorkflowView({
   return (
     <div className="enter mx-auto flex w-full max-w-[900px] flex-col gap-6 px-8 py-8">
       {approvable && ready.length > 0 ? (
-        <ApprovalCard
-          readyCount={parkingIds.length > 1 ? parkingIds.length : ready.length}
-          blockedCount={blocked.length}
-          working={working}
-          onApprove={onApproveAll}
-          t={t}
-        />
+        // ApprovalCard is a bare bar by design (see its own comment) - meant to
+        // sit directly in a header/footer strip. This page has no such strip of
+        // its own, so it gets the same card chrome as the invoice groups below
+        // it rather than floating unframed above them.
+        <div className="elevated-2 rounded-[14px] border border-primary/35 bg-surface-container-high p-5">
+          <ApprovalCard
+            readyCount={parkingIds.length > 1 ? parkingIds.length : ready.length}
+            blockedCount={blocked.length}
+            working={working}
+            onApprove={onApproveAll}
+            t={t}
+          />
+        </div>
       ) : null}
 
       <InvoiceGroup

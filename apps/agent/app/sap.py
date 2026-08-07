@@ -133,6 +133,9 @@ class McpSap:
         self._token_expires = 0.0
         self._agent_arn: str | None = None
         self._cognito: dict | None = None
+        # Which version of the Cognito secret to authenticate with. See
+        # `_fall_back_a_version`.
+        self._secret_stage = os.getenv("COGNITO_SECRET_STAGE", "AWSCURRENT")
 
     # --- plumbing ---------------------------------------------------------
 
@@ -149,10 +152,38 @@ class McpSap:
 
         if self._cognito is None:
             secrets = boto3.client("secretsmanager", region_name=self.region)
-            raw = secrets.get_secret_value(SecretId=self.COGNITO_SECRET)["SecretString"]
+            raw = secrets.get_secret_value(
+                SecretId=self.COGNITO_SECRET, VersionStage=self._secret_stage
+            )["SecretString"]
             self._cognito = json.loads(raw)
 
         return self._agent_arn, self._cognito
+
+    def _fall_back_a_version(self) -> bool:
+        """Authenticate with the previous Cognito secret instead. True if switched.
+
+        The runtime's JWT authorizer names one user pool, fixed when the runtime
+        was created. Re-running the workshop setup mints a fresh pool and
+        overwrites this secret, and every call then fails with 401 and "Claim
+        'iss' value mismatch with configuration" - a token that is perfectly
+        valid, issued by a pool the runtime has never been told to trust.
+
+        The previous version of the secret still holds the pool it does trust, so
+        one step back is the whole fix. Only tried once, and only for that
+        specific failure: silently trying old credentials on any 401 would hide a
+        genuine expiry.
+        """
+        if self._secret_stage != "AWSCURRENT":
+            return False
+        log.warning(
+            "the current Cognito secret names a pool this runtime does not trust; "
+            "falling back to AWSPREVIOUS"
+        )
+        self._secret_stage = "AWSPREVIOUS"
+        self._cognito = None
+        self._token = None
+        self._token_expires = 0.0
+        return True
 
     def _bearer(self) -> str:
         """Cached client-credentials token. Refreshed a minute before expiry."""
@@ -199,27 +230,51 @@ class McpSap:
         if body is not None:
             arguments["request_body"] = json.dumps(body)
 
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": self.TOOL, "arguments": arguments},
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        }
+
         response = requests.post(
             endpoint,
-            headers={
-                "authorization": f"Bearer {self._bearer()}",
-                "Content-Type": "application/json",
-                "Accept": "application/json, text/event-stream",
-            },
-            json={
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "tools/call",
-                "params": {"name": self.TOOL, "arguments": arguments},
-            },
+            headers={"authorization": f"Bearer {self._bearer()}", **headers},
+            json=payload,
             timeout=120,
         )
+
+        # A token from the wrong Cognito pool: valid, signed, and refused. One
+        # step back through the secret's versions is the fix, and it is worth
+        # trying before reporting an outage that is really a re-provisioned
+        # workshop.
+        if response.status_code == 401 and "iss" in response.text and self._fall_back_a_version():
+            response = requests.post(
+                endpoint,
+                headers={"authorization": f"Bearer {self._bearer()}", **headers},
+                json=payload,
+                timeout=120,
+            )
+
         ms = (time.perf_counter() - started) * 1000
         # The entity, not the whole URL - the base path is the same every time and
         # only the tail says which object was read.
         entity = url.rsplit("/", 1)[-1][:90]
         if response.status_code != 200:
-            log.error("%s %s -> HTTP %d in %.0fms", method, entity, response.status_code, ms)
+            # The body says which of the many 401s this is; without it the log
+            # reports an outage and the cause stays invisible.
+            log.error(
+                "%s %s -> HTTP %d in %.0fms: %s",
+                method,
+                entity,
+                response.status_code,
+                ms,
+                response.text[:300],
+            )
             raise SapError(f"SAP is not responding ({response.status_code}).")
 
         log.info("%s %s -> ok in %.0fms", method, entity, ms)
