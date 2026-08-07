@@ -78,7 +78,11 @@ class FakeSap:
         order = _DEMO_ORDERS.get(number)
         if order is None:
             return None
-        return GoodsReceipt(document=f"50000009{number[-2:]}", quantity=order[2])
+        # Year and item too, because the park payload is rejected without them
+        # and a fake that omitted them would let a broken payload pass the tests.
+        return GoodsReceipt(
+            document=f"50000009{number[-2:]}", quantity=order[2], year="2025", item="1"
+        )
 
     async def reference_exists(self, vendor: str, reference: str) -> str | None:
         return self._parked.get((vendor, reference))
@@ -259,6 +263,13 @@ class McpSap:
             raise SapError(f"SAP is not responding ({response.status_code}).")
 
         log.info("%s %s -> ok in %.0fms", method, entity, ms)
+        if method == "POST" and '"error"' in response.text:
+            # A rejected write answers with HTTP 200 and an OData error document
+            # inside. `park` pulls the message out for the interface; this logs
+            # the rest, which is where the field-level detail lives - that is how
+            # the missing goods receipt reference was found. Only on failure: the
+            # successful response is four thousand characters of no interest.
+            log.error("%s %s rejected: %s", method, entity, response.text[:2000])
         return self._unwrap(response.text)
 
     @staticmethod
@@ -366,7 +377,14 @@ class McpSap:
             return None
 
         received = sum(float(r.get("QuantityInEntryUnit", 0) or 0) for r in rows)
-        return GoodsReceipt(document=rows[0].get("MaterialDocument", ""), quantity=str(received))
+        first = rows[0]
+        return GoodsReceipt(
+            document=first.get("MaterialDocument", ""),
+            quantity=str(received),
+            # Carried so the park payload can reference the receipt it settles.
+            year=str(first.get("MaterialDocumentYear", "") or ""),
+            item=str(first.get("MaterialDocumentItem", "") or ""),
+        )
 
     async def reference_exists(self, vendor: str, reference: str) -> str | None:
         url = (
@@ -391,19 +409,38 @@ class McpSap:
         except SapError:
             return []
 
-        found = []
-        for row in rows:
-            number = row.get("PurchaseOrder")
-            if not number:
-                continue
-            order = await self.purchase_order(number, row.get("PurchaseOrderItem", "10"))
-            if order and order.supplier and vendor.endswith(order.supplier[-4:]):
-                found.append(order)
-        return found
+        # One round trip per candidate, and they were being awaited in turn: five
+        # orders at roughly two seconds each, to produce a single suggestion, on
+        # the one invoice the audience is already looking at. They are
+        # independent lookups, so they go together.
+        candidates = [
+            self.purchase_order(row["PurchaseOrder"], row.get("PurchaseOrderItem", "10"))
+            for row in rows
+            if row.get("PurchaseOrder")
+        ]
+        orders = await asyncio.gather(*candidates, return_exceptions=True)
+
+        return [
+            order
+            for order in orders
+            if isinstance(order, PurchaseOrder)
+            and order.supplier
+            and vendor.endswith(order.supplier[-4:])
+        ]
 
     async def park(self, payload: dict) -> Parked:
         url = f"{self.base_url}/API_SUPPLIERINVOICE_PROCESS_SRV/A_SupplierInvoice"
         document = await asyncio.to_thread(self._invoke, url, "POST", payload)
+
+        # A rejected write comes back as HTTP 200 with an OData error document
+        # inside, so the message has to be dug out rather than assumed absent.
+        # Reporting "SAP did not return a document number" instead threw away the
+        # one sentence that says what was wrong with the payload.
+        failure = document.get("error")
+        if isinstance(failure, dict):
+            message = failure.get("message")
+            text = message.get("value") if isinstance(message, dict) else message
+            raise SapError(str(text or failure.get("code") or "SAP rejected the invoice."))
 
         entity = self._entity(document)
         if entity is None or not entity.get("SupplierInvoice"):

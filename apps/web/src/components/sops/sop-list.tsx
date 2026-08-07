@@ -13,11 +13,11 @@ export function SopList({
 }) {
   return (
     <div className="flex flex-col gap-1.5">
-      <div className="font-data text-[10.5px] text-ink-faint uppercase tracking-[0.14em]">
+      <div className="font-mono text-[10.5px] text-on-surface-faint uppercase tracking-[0.14em]">
         Files
       </div>
       {files.length === 0 ? (
-        <p className="text-[12.5px] text-ink-dim">No SOP files yet.</p>
+        <p className="text-[12.5px] text-on-surface-variant">No SOP files yet.</p>
       ) : (
         <ul className="flex flex-col gap-1">
           {files.map((file) => (
@@ -27,12 +27,12 @@ export function SopList({
                 onClick={() => onSelect(file.key)}
                 className={`pressable w-full cursor-pointer rounded-md border px-3 py-2 text-left transition-colors ${
                   file.key === selectedKey
-                    ? "border-brass-deep bg-brass/[0.08]"
-                    : "border-line bg-surface-2 hover:border-ink-faint"
+                    ? "border-primary/45 bg-primary-container"
+                    : "border-outline-variant bg-surface-container hover:border-on-surface-variant"
                 }`}
               >
-                <div className="truncate text-[13px] text-ink">{file.key}</div>
-                <div className="font-data text-[11px] text-ink-faint">
+                <div className="truncate text-[13px] text-on-surface">{file.key}</div>
+                <div className="font-mono text-[11px] text-on-surface-faint">
                   {formatSize(file.size)} · {formatDate(file.lastModified)}
                 </div>
               </button>

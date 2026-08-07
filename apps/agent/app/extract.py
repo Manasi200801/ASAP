@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import os
+from dataclasses import dataclass
 
 from .storage import split_uri, upload_bucket
 from .types import Extracted
@@ -56,21 +57,31 @@ def sample_batch() -> list[Extracted]:
     ]
 
 
-SYSTEM = """You read supplier invoices for an SAP Accounts Payable team and map \
-them to SAP S/4HANA fields. Return only a JSON object, no prose.
+SYSTEM = """You read documents for an SAP Accounts Payable team. You do two things \
+in one pass: decide whether the document is a supplier invoice at all, and if it \
+is, map it to SAP S/4HANA fields. Return only a JSON object, no prose.
 
 Rules:
+- Decide `is_invoice` first. A supplier invoice bills a company for goods or \
+services and carries an invoice number and an amount payable. A delivery note, \
+purchase order, quotation, statement, receipt, contract, photograph or any other \
+document is not a supplier invoice.
+- If it is not an invoice, say so in `not_invoice_reason` in one short sentence a \
+clerk would understand, and leave the other fields empty. Do not guess at fields \
+to be helpful.
 - Copy values exactly as printed. Never invent, correct or complete a value.
 - Amounts and quantities are plain decimal strings: "113.50", not "113,50 EUR".
 - If a field is genuinely absent, use "" and give it a confidence of 0.
 - confidence is your certainty per field, 0 to 1. Be honest: a value you inferred \
 rather than read is below 0.8."""
 
-PROMPT = """Extract this invoice.
+PROMPT = """Read this document.
 
 Return exactly this shape:
 
 {
+  "is_invoice": true,
+  "not_invoice_reason": "empty when is_invoice is true; otherwise what it is instead",
   "supplier_invoice_id": "the supplier's own invoice number",
   "vendor": "supplier or vendor number",
   "purchase_order": "purchase order number",
@@ -109,12 +120,30 @@ def _s3_bytes(bucket: str, key: str) -> bytes:
     return body["Body"].read()
 
 
-def _one(key: str) -> Extracted:
+@dataclass(frozen=True)
+class Rejected:
+    """A document that was uploaded but is not a supplier invoice."""
+
+    file: str
+    reason: str
+
+
+def _one(key: str) -> Extracted | Rejected:
     from .bedrock import ask_json
 
     bucket, path = resolve(key)
     name = path.rsplit("/", 1)[-1]
     fields = ask_json(SYSTEM, PROMPT, document=_s3_bytes(bucket, path), name=name)
+
+    # Default to rejecting. A document the model could not confidently call an
+    # invoice must not fall through into the validation pipeline, where every
+    # rule would compare empty strings and report a confident nonsense answer.
+    if not fields.get("is_invoice"):
+        return Rejected(
+            file=name,
+            reason=str(fields.get("not_invoice_reason") or "").strip()
+            or "This does not look like a supplier invoice.",
+        )
 
     return Extracted(
         source=f"s3://{bucket}/{path}",
@@ -137,35 +166,32 @@ def _one(key: str) -> Extracted:
     )
 
 
-def workshop_keys() -> list[str]:
-    """The six PDFs the workshop pre-provisions, addressed in their own bucket.
+async def extract_batch(
+    keys: list[str], sample: bool = False
+) -> tuple[list[Extracted], list[Rejected]]:
+    """Read what was uploaded. Returns the invoices, and what was not one.
 
-    This is what "Load batch" runs. It reads the real files through Bedrock
-    rather than returning the transcribed constants, so the demo path exercises
-    the same code as a clerk's upload. The mover refuses to delete from this
-    bucket, so replaying the batch never consumes it.
+    The sample batch is now only reachable by asking for it: `sample=True`, which
+    the interface's "load sample batch" button sends, or `EXTRACT_BACKEND=sample`.
+
+    It used to be the fallback whenever `keys` was empty. That meant a failed
+    upload silently produced six invoices nobody had uploaded, and the run looked
+    perfect - which is how uploads stayed broken without anyone noticing. An
+    empty batch is now an empty batch.
     """
-    bucket = os.getenv("INVOICE_BUCKET", "516359819848-invoice")
-    return [f"s3://{bucket}/fpl-invoice-0{n}.pdf" for n in range(1, 7)]
+    if sample or os.getenv("EXTRACT_BACKEND", "sample") != "bedrock":
+        return sample_batch(), []
 
-
-async def extract_batch(keys: list[str]) -> list[Extracted]:
-    """Read a batch. In bedrock mode nothing here is transcribed.
-
-    An empty batch used to fall back to `sample_batch()` even with the bedrock
-    backend selected, so a clerk could upload real PDFs, watch a convincing run,
-    and be looking at Lab 06 constants. Now an empty batch means the workshop
-    PDFs, read for real; only EXTRACT_BACKEND=sample returns transcriptions.
-    """
-    if os.getenv("EXTRACT_BACKEND", "sample") != "bedrock":
-        return sample_batch()
+    if not keys:
+        return [], []
 
     import asyncio
 
-    batch = keys or workshop_keys()
-    if not keys:
-        log.info("no keys supplied, reading the %d workshop invoices", len(batch))
-
     # Read the batch concurrently; the orchestrator paces the emission afterwards,
     # so extraction speed does not affect how the cascade looks.
-    return list(await asyncio.gather(*(asyncio.to_thread(_one, key) for key in batch)))
+    results = await asyncio.gather(*(asyncio.to_thread(_one, key) for key in keys))
+
+    invoices = [r for r in results if isinstance(r, Extracted)]
+    rejected = [r for r in results if isinstance(r, Rejected)]
+    log.info("extracted %d invoices, rejected %d documents", len(invoices), len(rejected))
+    return invoices, rejected

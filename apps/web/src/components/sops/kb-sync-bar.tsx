@@ -65,26 +65,28 @@ export function KbSyncBar({
   const busy = phase === "starting" || phase === "syncing";
 
   return (
-    <div className="flex items-center gap-3 rounded-md border border-line bg-surface-2 px-3.5 py-2.5">
+    <div className="flex items-center gap-3 rounded-md border border-outline-variant bg-surface-container px-3.5 py-2.5">
       <button
         type="button"
         onClick={sync}
         disabled={busy}
-        className="pressable cursor-pointer rounded-full border border-brass-deep bg-brass/[0.08] px-3 py-1 font-medium text-[12px] text-brass disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brass"
+        className="pressable cursor-pointer rounded-full border border-primary/45 bg-primary-container px-3 py-1 font-medium text-[12px] text-on-primary-container disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
       >
         {busy ? "Syncing…" : "Sync knowledge base"}
       </button>
       {unsyncedCount > 0 && !busy ? (
-        <span className="font-data text-[11px] text-ink-faint">
+        <span className="font-mono text-[11px] text-on-surface-faint">
           {unsyncedCount} unsynced change{unsyncedCount === 1 ? "" : "s"}
         </span>
       ) : null}
-      {phase === "synced" ? <span className="text-[12px] text-ok">Synced</span> : null}
+      {phase === "synced" ? (
+        <span className="text-[12px] text-on-success-container">Synced</span>
+      ) : null}
       {phase === "timeout" ? (
-        <span className="text-[12px] text-ink-dim">Still running — check back</span>
+        <span className="text-[12px] text-on-surface-variant">Still running — check back</span>
       ) : null}
       {phase === "failed" && error ? (
-        <span className="text-[12px] text-blocked">{error}</span>
+        <span className="text-[12px] text-on-error-container">{error}</span>
       ) : null}
     </div>
   );

@@ -230,6 +230,29 @@ def posting_period(inv: Extracted, po: PurchaseOrder | None, gr: GoodsReceipt | 
 
 @_rule(16, "Not a duplicate")
 def not_duplicate(inv: Extracted, po: PurchaseOrder | None, gr: GoodsReceipt | None) -> RuleResult:
+    # Checked before SAP, because SAP cannot see this one. Two files billing the
+    # same supplier invoice in one batch have both not been parked yet, and each
+    # row is given its own fresh reference, so both would post and the supplier
+    # would be paid twice.
+    if inv.duplicate_of:
+        return _no(
+            16,
+            "Not a duplicate",
+            f"Invoice {inv.supplier_invoice_id} was already read from {inv.duplicate_of} "
+            "in this batch",
+        )
+
+    # The same supplier invoice, parked by us on an earlier run. This is the
+    # expensive duplicate: the copy arriving a week later, under a new file name,
+    # against a purchase order that still looks open.
+    if inv.already_parked:
+        return _no(
+            16,
+            "Not a duplicate",
+            f"Invoice {inv.supplier_invoice_id} from supplier {inv.vendor} was already "
+            f"parked as SAP document {inv.already_parked}",
+        )
+
     # The reference carries the run's sequence, so a re-run produces fresh
     # references and this passes. Reusing a sequence is what trips it.
     if inv.existing_reference:

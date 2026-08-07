@@ -11,7 +11,7 @@ Change it here first, then on both sides.
 
 ### `POST /api/upload`
 
-Request: `{ "runId": string, "files": [{ "name": string, "size": number }] }`
+Request: `{ "runId": string, "files": [{ "name": string, "size": number, "type"?: string }] }`
 
 Response: `{ "uploads": [{ "name": string, "key": string, "url": string }] }`
 
@@ -22,6 +22,15 @@ server.
 `key` comes back fully qualified as `s3://<bucket>/<key>`, because the agent reads from two
 buckets: uploads, and the workshop's own PDFs for the demo batch. A bare key in `/api/chat`'s
 `keys` still resolves against the upload bucket.
+
+**At most 10 documents per run**, and only `application/pdf`, `image/png`, `image/jpeg`,
+`image/gif`, `image/webp`. Both limits are enforced here, not only in the browser — this route
+decides what a presigned URL is ever issued for. A photographed invoice is as ordinary as a
+scanned one, so images are first-class rather than a special case.
+
+The presigned `ContentType` must match the `Content-Type` the browser then sends, because the
+header is part of what the signature covers. A mismatch fails the PUT with a signature error
+that says nothing about content types.
 
 **Bucket CORS is required** and is not configured by the workshop stack. Without it the browser
 PUT is blocked. Minimum rule:
@@ -37,13 +46,39 @@ PUT is blocked. Minimum rule:
 
 ### `POST /api/chat`
 
-Request: `{ "runId": string, "keys": string[], "locale": "en" | "de", "message"?: string }`
+Request:
+`{ "runId": string, "keys": string[], "locale": "en" | "de", "message"?: string, "sample"?: boolean }`
 
 Response: an SSE stream of the events below. Read-only — this endpoint never writes to SAP.
 
+Two modes, decided by the server:
+
+- **a `message` about a run that already has invoices** — answered from the stored run, streamed
+  as `text` deltas. Touches neither SAP nor the state machine.
+- **anything else** — starts a run.
+
+`sample: true` asks for the built-in demo batch, and is the *only* way to get it. An empty
+`keys` list used to mean the same thing implicitly, which meant a failed upload silently produced
+six invoices nobody had uploaded and the run looked perfect. Empty now means empty, and the run
+ends with a recoverable `error`.
+
+**Not every uploaded document is an invoice.** Extraction classifies first and maps second, in
+one model call. A document that is not a supplier invoice never enters validation — it is named
+in a `text` event with the reason, and the rest of the batch continues. If nothing in the batch
+was an invoice, the run fails with `No supplier invoices to check.`
+
 ### `POST /api/approve`
 
-Request: `{ "runId": string, "overrideIds"?: string[], "rejectIds"?: string[] }`
+Request:
+`{ "runId": string, "readyIds"?: string[], "overrideIds"?: string[], "rejectIds"?: string[] }`
+
+`readyIds` omitted or empty parks every ready invoice still outstanding; a subset parks only
+those rows (a single invoice's own approve button). An invoice already parked by an earlier call
+is skipped rather than parked twice, so individual and "approve all" calls can be mixed freely on
+the same run. The run only reaches `done` once every ready invoice has been parked, however many
+separate calls that took - one row parked out of five leaves the run in `awaiting-approval`. A
+park SAP refuses leaves that invoice outstanding too, so the run stays open for the retry rather
+than closing as though the batch had settled.
 
 Response: an SSE stream of `tool-call`, `posting` and `filed` events.
 
@@ -311,7 +346,7 @@ Terminal. The run moves to `failed`.
 | 13 | GR quantity sufficient | rule |
 | 14 | Tax code valid for company code | rule |
 | 15 | *(to be filled from Lab 06 Step 3)* | — |
-| 16 | Not a duplicate reference | rule |
+| 16 | Not a duplicate | rule |
 
 Rules 4, 7, and 9 are where deterministic comparison gives up and judgment starts. Everything
 else is arithmetic or lookup, and belongs in code.
@@ -376,6 +411,26 @@ purchase order and creates no accounting entry. **Never post for payment.**
 `DocumentDate` and `PostingDate` **must** be `2025-03-15`. The workshop SAP books run in early
 2025; today's date fails with a posting-period error. The UI surfaces the posting period as a
 chip so the handling is visible rather than hidden.
+
+### Duplicate documents
+
+Three different things, caught in three different places, because no single check covers them:
+
+| What | Where | Result |
+|---|---|---|
+| Byte-identical file, dropped twice | browser, SHA-256 before upload | never uploaded; the chip is struck through and named |
+| Same invoice, different file, same batch | `mark_duplicates`, before any rule runs | rule 16 fails, row blocked |
+| Same invoice, already parked in SAP | rule 16, via `reference_exists` | rule 16 fails, row blocked |
+
+The middle one is the dangerous one and the only one nothing used to catch. Neither copy has
+been parked yet, and the orchestrator assigns every row its own fresh reference — so all sixteen
+checks pass on both copies and the supplier is paid twice. Identity is the supplier plus their
+invoice number, never the file name: the same invoice forwarded twice arrives under two names,
+which is precisely the case worth catching.
+
+Hashes are remembered for the browser session, so re-dropping a file ten minutes later is still
+caught. They are not remembered across reloads — that would need storage, and the SAP-side check
+already covers anything that was actually parked.
 
 ### Re-run safety
 

@@ -173,7 +173,13 @@ $env:WEB_PORT=3001; $env:AGENT_PORT=8023; npm run dev
 
 `AGENT_ENDPOINT` is derived from `AGENT_PORT` and passed into the web process, and an inherited environment variable wins over `apps/web/.env.local` — so moving the agent port moves both halves. Set `AGENT_ENDPOINT` explicitly if you need to point at an agent running somewhere else.
 
-To run just one app, `cd apps/web && npm run dev` or `cd apps/agent && uvicorn app.main:app --reload --port 8000` still work exactly as before.
+To run just one app: `cd apps/web && npm run dev`, or for the agent, invoke it
+through the venv interpreter rather than a bare `uvicorn` —
+`.venv/bin/python -m uvicorn app.main:app --reload --reload-dir app --port 8000`
+on macOS and Linux, `.\.venv\Scripts\python.exe -m ...` on Windows. See
+`apps/agent/README.md` for why: a bare `uvicorn` picks whatever is first on
+`PATH`, which on a machine with Anaconda is usually not your virtualenv, and the
+failure surfaces as an SSL error rather than anything that mentions Python.
 
 ## Running without AWS
 

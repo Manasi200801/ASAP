@@ -2,6 +2,7 @@
 
 import type { Translate } from "@/lib/i18n";
 import { useState } from "react";
+import { ArrowIcon, ShieldIcon } from "./icons";
 
 /**
  * The single human approval gate.
@@ -9,12 +10,27 @@ import { useState } from "react";
  * The label carries the whole consequence rather than floating a count above it,
  * and the excluded invoice is named rather than silently dropped. Both exist
  * because a clerk hesitates when they are not certain what they are agreeing to.
+ *
+ * It is pinned above the composer rather than parked in the scrolling column, so
+ * the one decision the run stops for can never be scrolled past. Everything
+ * about it is a size larger and slower than the rest of the page - a 56px
+ * target, an entrance that travels further over 440ms, one halo beat and then
+ * stillness. The safety line is not fine print: it sits at reading size next to
+ * a drawn mark, because "nothing is paid" is the sentence that lets someone
+ * press this.
+ *
+ * `working` comes from the run, not local state - a batch approval can come back
+ * with some invoices still unparked (a SAP write can fail for one and succeed for
+ * another), which reopens this exact card for a retry. Local state that only ever
+ * moved forward would leave the button stuck disabled forever after that first
+ * round; deriving from the run means it always reflects what is actually running.
  */
 export function ApprovalCard({
   readyCount,
   overrideCount,
   rejectCount,
   blockedCount,
+  working,
   onApprove,
   t,
 }: {
@@ -22,10 +38,11 @@ export function ApprovalCard({
   overrideCount: number;
   rejectCount: number;
   blockedCount: number;
+  working: boolean;
   onApprove: () => void;
   t: Translate;
 }) {
-  const [state, setState] = useState<"idle" | "swapping" | "working">("idle");
+  const [justClicked, setJustClicked] = useState(false);
 
   // Overridden invoices post exactly like clean ones, so the count on the button
   // has to include them. A clerk who overrides two and reads "post 5" then
@@ -35,40 +52,54 @@ export function ApprovalCard({
   const stillOpen = blockedCount - overrideCount - rejectCount;
 
   function approve() {
-    if (state !== "idle") return;
-    setState("swapping");
-    // Blur the label out, swap it, blur back in. Width is held by the flex row.
-    setTimeout(() => setState("working"), 200);
+    if (working) return;
+    // Purely the blur-swap cue - the actual disabled/label state below never
+    // depends on this, so it can't get stuck if the run comes back needing
+    // another round.
+    setJustClicked(true);
+    setTimeout(() => setJustClicked(false), 220);
     onApprove();
   }
 
   return (
-    <div className="enter flex max-w-[520px] flex-col gap-2.5 rounded-lg border border-brass-deep bg-gradient-to-b from-surface-2 to-surface-1 p-3.5">
+    <div className="gate-in elevated-2 flex w-full max-w-[720px] flex-col gap-4 rounded-[14px] border border-primary/35 bg-surface-container-high p-5">
       <button
         type="button"
         onClick={approve}
-        disabled={state !== "idle"}
-        className="pressable flex min-h-[42px] w-full cursor-pointer items-center justify-between gap-3 rounded-md bg-brass px-4 font-semibold text-[#17130a] text-sm transition-[filter] hover:brightness-107 disabled:cursor-default focus-visible:outline focus-visible:outline-2 focus-visible:outline-brass focus-visible:outline-offset-[3px]"
+        disabled={working}
+        aria-busy={working}
+        className={`state-layer pressable flex min-h-[56px] w-full cursor-pointer items-center justify-between gap-4 rounded-full bg-primary px-7 font-semibold text-[19px] text-on-primary transition-opacity disabled:cursor-default disabled:opacity-80 focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-[3px] focus-visible:outline-on-surface ${
+          working ? "" : "gate-halo"
+        }`}
       >
-        <span className="label-swap" data-swapping={state === "swapping"}>
-          {state === "idle"
-            ? t("approveLabel", { count: posting })
-            : t("approveWorking", { count: posting })}
+        <span className="label-swap text-left" data-swapping={justClicked}>
+          {working
+            ? t("approveWorking", { count: posting })
+            : t("approveLabel", { count: posting })}
         </span>
-        <span className="font-data opacity-65">→</span>
+        <ArrowIcon className="h-5 w-5 flex-none opacity-90" />
       </button>
 
-      <div className="flex justify-between gap-3 text-[12.5px] text-ink-dim">
-        <span>{t("approveSub")}</span>
-        <span className="flex flex-wrap justify-end gap-2.5 whitespace-nowrap font-data text-[11px]">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <p className="flex items-center gap-2.5 text-[16px] text-on-surface-variant">
+          <ShieldIcon className="h-5 w-5 flex-none text-success" />
+          {t("approveSub")}
+        </p>
+        <span className="flex flex-wrap items-center justify-end gap-2">
           {overrideCount > 0 ? (
-            <span className="text-ok">{t("overriding", { count: overrideCount })}</span>
+            <span className="inline-flex items-center whitespace-nowrap rounded-full border border-success/45 bg-success-container px-3 py-1 font-semibold text-[14px] text-on-success-container uppercase tracking-[0.05em]">
+              {t("overriding", { count: overrideCount })}
+            </span>
           ) : null}
           {rejectCount > 0 ? (
-            <span className="text-blocked">{t("rejecting", { count: rejectCount })}</span>
+            <span className="inline-flex items-center whitespace-nowrap rounded-full border border-error/45 bg-error-container px-3 py-1 font-semibold text-[14px] text-on-error-container uppercase tracking-[0.05em]">
+              {t("rejecting", { count: rejectCount })}
+            </span>
           ) : null}
           {stillOpen > 0 ? (
-            <span className="text-blocked">{t("excluded", { count: stillOpen })}</span>
+            <span className="inline-flex items-center whitespace-nowrap rounded-full border border-error/45 bg-error-container px-3 py-1 font-semibold text-[14px] text-on-error-container uppercase tracking-[0.05em]">
+              {t("excluded", { count: stillOpen })}
+            </span>
           ) : null}
         </span>
       </div>

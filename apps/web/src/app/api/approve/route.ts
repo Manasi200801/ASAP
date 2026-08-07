@@ -38,7 +38,7 @@ export async function POST(request: Request) {
     // The decisions have to travel. The agent holds the run and knows its own
     // ready set, but only the browser knows what the clerk marked - dropping
     // these here silently posts the batch as if nobody had overridden anything.
-    body: JSON.stringify({ runId, overrideIds, rejectIds }),
+    body: JSON.stringify({ runId, readyIds, overrideIds, rejectIds }),
   });
 
   if (!upstream.ok || !upstream.body) {

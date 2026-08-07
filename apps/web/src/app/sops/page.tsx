@@ -61,12 +61,15 @@ export default function SopsPage() {
 
   return (
     <main className="mx-auto max-w-[1080px] px-5 pb-24">
-      <section className="mt-10 overflow-hidden rounded-lg border border-line bg-surface-1">
-        <header className="flex flex-wrap items-center gap-4 border-line border-b bg-surface-2 px-4 py-3">
-          <div className="font-data text-[12px] uppercase tracking-[0.12em]">
-            STRIKE <span className="text-brass">AP</span> · SOPs
+      <section className="mt-10 overflow-hidden rounded-lg border border-outline-variant bg-surface-container-low">
+        <header className="flex flex-wrap items-center gap-4 border-outline-variant border-b bg-surface-container px-4 py-3">
+          <div className="font-mono text-[12px] uppercase tracking-[0.12em]">
+            STRIKE <span className="text-on-primary-container">AP</span> · SOPs
           </div>
-          <Link href="/" className="ml-auto font-data text-[11.5px] text-ink-dim hover:text-ink">
+          <Link
+            href="/"
+            className="ml-auto font-mono text-[11.5px] text-on-surface-variant hover:text-on-surface"
+          >
             ← Back
           </Link>
         </header>
@@ -74,7 +77,7 @@ export default function SopsPage() {
         <div className="flex flex-col gap-4 px-4 py-5">
           <KbSyncBar unsyncedCount={unsyncedCount} onSynced={() => setUnsyncedCount(0)} />
 
-          {loadError ? <p className="text-[12.5px] text-blocked">{loadError}</p> : null}
+          {loadError ? <p className="text-[12.5px] text-on-error-container">{loadError}</p> : null}
 
           <SopUpload existingKeys={files.map((f) => f.key)} onUpload={upload} />
 
@@ -83,7 +86,7 @@ export default function SopsPage() {
             {selectedKey ? (
               <SopEditor fileKey={selectedKey} content={content} onSave={save} />
             ) : (
-              <p className="text-[13px] text-ink-dim">Select a file to edit it.</p>
+              <p className="text-[13px] text-on-surface-variant">Select a file to edit it.</p>
             )}
           </div>
         </div>

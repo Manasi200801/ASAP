@@ -162,11 +162,11 @@ export type RunState =
 
 export type InvoiceRow = InvoiceEvent & {
   rules: RuleEvent[];
-  // `refused` is SAP rejecting the park, which is not the same as the checks
-  // blocking it: the invoice passed everything we can test and was still turned
-  // down at the write. Leaving such a row green is how a failed batch reads as a
-  // successful one.
-  status: "pending" | "ready" | "blocked" | "parked" | "refused";
+  // "parkError" is distinct from "blocked" - it passed every check and only
+  // failed on the SAP write itself, so it stays eligible for a retry rather
+  // than being excluded from the batch the way a failed check is. Leaving such
+  // a row green is how a failed batch reads as a successful one.
+  status: "pending" | "ready" | "blocked" | "parked" | "parkError";
   headline?: string;
   impact?: string;
   detail?: string;
@@ -179,9 +179,14 @@ export type InvoiceRow = InvoiceEvent & {
   // single.
   decision?: "override" | "reject";
   // What SAP said when it refused the park, verbatim.
-  postingError?: string;
+  parkError?: string;
   // Where the PDF was filed once the batch settled.
   filed?: { status: "moved" | "kept" | "error"; bucket?: string; message?: string };
+  // Set on the first `rule` event for this invoice, not on `invoice` - checks run
+  // sequentially, so timing from extraction would make every later invoice's
+  // duration include the wait for everything ahead of it in the queue.
+  startedAt?: number;
+  finishedAt?: number;
 };
 
 /** Derive an invoice's overall status from its rule results. */
@@ -190,3 +195,9 @@ export function deriveStatus(rules: RuleEvent[]): "pending" | "ready" | "blocked
   const evaluated = rules.filter((r) => r.status !== "skip").length;
   return evaluated >= RULE_COUNT ? "ready" : "pending";
 }
+
+/**
+ * Documents accepted per run. Enforced in the browser as a courtesy and again in
+ * `/api/upload`, which is the boundary that decides what gets a presigned URL.
+ */
+export const MAX_FILES = 10;

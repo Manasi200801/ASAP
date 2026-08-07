@@ -59,28 +59,30 @@ export function SopUpload({
         }}
         onClick={() => input.current?.click()}
         className={`cursor-pointer rounded-md border border-dashed px-3.5 py-3 text-left text-[13px] transition-colors ${
-          dragging ? "border-brass bg-brass/[0.06] text-ink" : "border-line-strong text-ink-dim"
+          dragging
+            ? "border-primary/45 bg-primary-container text-on-surface"
+            : "border-outline text-on-surface-variant"
         }`}
       >
         Upload a new SOP (.md) — click or drop a file
       </div>
-      {error ? <p className="text-[12px] text-blocked">{error}</p> : null}
+      {error ? <p className="text-[12px] text-on-error-container">{error}</p> : null}
       {pending ? (
-        <div className="flex items-center gap-2.5 rounded-md border border-blocked-deep bg-blocked/[0.06] px-3 py-2 text-[12.5px]">
-          <span className="text-ink-dim">
-            This will overwrite <b className="text-ink">{pending.key}</b>.
+        <div className="flex items-center gap-2.5 rounded-md border border-error/45 bg-error-container px-3 py-2 text-[12.5px]">
+          <span className="text-on-surface-variant">
+            This will overwrite <b className="text-on-surface">{pending.key}</b>.
           </span>
           <button
             type="button"
             onClick={confirmOverwrite}
-            className="pressable cursor-pointer rounded-full border border-blocked px-2.5 py-1 text-[11.5px] text-blocked"
+            className="pressable cursor-pointer rounded-full border border-error/45 px-2.5 py-1 text-[11.5px] text-on-error-container"
           >
             Overwrite
           </button>
           <button
             type="button"
             onClick={() => setPending(null)}
-            className="cursor-pointer text-[11.5px] text-ink-faint"
+            className="cursor-pointer text-[11.5px] text-on-surface-faint"
           >
             Cancel
           </button>

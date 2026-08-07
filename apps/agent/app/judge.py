@@ -46,6 +46,10 @@ class Judge(Protocol):
 
     async def explain(self, inv: Extracted, failures: list[RuleResult], locale: str) -> str: ...
 
+    async def judge_all(
+        self, inv: Extracted, po: PurchaseOrder | None
+    ) -> tuple[RuleResult, RuleResult, RuleResult]: ...
+
 
 class FakeJudge:
     """Deterministic stand-in. Same shapes, no Bedrock call."""
@@ -127,6 +131,32 @@ class FakeJudge:
         first = failures[0]
         return first.detail or f"{first.label} failed."
 
+    async def judge_all(
+        self, inv: Extracted, po: PurchaseOrder | None
+    ) -> tuple[RuleResult, RuleResult, RuleResult]:
+        # No network here, so there is nothing to save by combining them.
+        return (
+            await self.supplier_matches(inv, po),
+            await self.material_matches(inv, po),
+            await self.price_within_policy(inv, po),
+        )
+
+
+BATCH_JUDGE_SYSTEM = """You are an SAP Accounts Payable specialist checking one \
+invoice against the purchase order it references. You decide three checks at once.
+
+Answer with JSON only, in exactly this shape:
+{"supplier": {"passed": true, "reasoning": "..."},
+ "material": {"passed": true, "reasoning": "..."},
+ "price": {"passed": true, "reasoning": "..."}}
+
+Each reasoning is one or two sentences.
+
+- Decide each check independently. One failing does not fail the others.
+- Reason from the values given. Never invent SAP data.
+- Write for an AP clerk, not an engineer. No field names in the reasoning unless \
+they are what the clerk would actually say.
+- If the evidence does not support a pass, fail it. A wrong pass posts money."""
 
 JUDGE_SYSTEM = """You are an SAP Accounts Payable specialist checking one invoice \
 against the purchase order it references. You decide only the check you are asked \
@@ -271,6 +301,69 @@ class BedrockJudge:
             inv,
             po,
             policy=policy,
+        )
+
+    async def judge_all(
+        self, inv: Extracted, po: PurchaseOrder | None
+    ) -> tuple[RuleResult, RuleResult, RuleResult]:
+        """Rules 4, 7 and 9 in a single Converse call.
+
+        They were three calls. Six invoices then meant eighteen concurrent
+        requests, which is enough contention that the first row took longer to
+        resolve than the whole batch needed to. They share the same facts and the
+        same prompt preamble, so one call carries all three and the batch drops
+        to one request per invoice.
+
+        The three verdicts stay independent - the model is told to decide each on
+        its own, and each still becomes its own rule chip with its own reasoning.
+        """
+        import asyncio
+
+        from .bedrock import ask_json
+
+        policy = await asyncio.to_thread(
+            self._sop, "supplier invoice unit price tolerance against purchase order"
+        )
+
+        prompt = (
+            f"{_order_facts(inv, po)}\n\n"
+            "Checks:\n"
+            "supplier - Are the invoice supplier and the purchase order supplier the same "
+            "business entity? SAP S/4HANA often reports a Business Partner identifier where "
+            "the invoice carries the legacy vendor number; those are the same party.\n"
+            "material - Do the invoice and the order line cover the same material? "
+            "Description wording may differ; the material itself must not.\n"
+            "price - Is the invoiced unit price acceptable against the order price? Absent a "
+            "stated policy, treat 5% over as the limit. State the percentage."
+        )
+        if policy:
+            prompt += f"\n\nRelevant standard operating procedure:\n{policy}"
+
+        answer = await asyncio.to_thread(ask_json, BATCH_JUDGE_SYSTEM, prompt)
+
+        sop_citation = next(
+            (line.lstrip("# ").strip() for line in policy.splitlines() if line.startswith("#")),
+            "SOP knowledge base",
+        ) if policy else None
+
+        def verdict(key: str, rule_id: int, label: str, citation: str | None) -> RuleResult:
+            # A missing key is a malformed answer, and a malformed answer must
+            # never become a silent pass - it fails, and the clerk sees why.
+            part = answer.get(key)
+            if not isinstance(part, dict):
+                return _judged(rule_id, label, False, "The check could not be completed.")
+            return _judged(
+                rule_id,
+                label,
+                bool(part.get("passed")),
+                str(part.get("reasoning", "")).strip(),
+                citation=citation,
+            )
+
+        return (
+            verdict("supplier", 4, "Supplier matches", f"A_BusinessPartner('{inv.vendor}')"),
+            verdict("material", 7, "Material matches", None),
+            verdict("price", 9, "Unit price within tolerance", sop_citation),
         )
 
     async def explain(self, inv: Extracted, failures: list[RuleResult], locale: str) -> str:

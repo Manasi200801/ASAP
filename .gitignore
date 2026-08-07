@@ -21,6 +21,9 @@ next-env.d.ts
 coverage/
 .vercel
 
+# The agent's SQLite store: real invoice data, rebuilt by running a batch.
+apps/agent/data/
+
 # --- Python ---
 __pycache__/
 *.pyc

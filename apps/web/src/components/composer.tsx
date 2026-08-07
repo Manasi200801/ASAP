@@ -1,79 +1,46 @@
 "use client";
 
 import type { Translate } from "@/lib/i18n";
-import { useRef, useState } from "react";
+import { useState } from "react";
+import { SendIcon } from "./icons";
 
 /**
  * Never an empty chat box.
  *
- * An empty composer asks a clerk to be inventive at the end of a close day. The
- * drop target, three concrete prompts, and a sample batch remove that demand -
- * and the sample button doubles as the demo's fallback.
+ * An empty composer asks a clerk to be inventive at the end of a close day.
+ * The three concrete prompts remove that demand - uploading itself lives in
+ * the action bar at the top of the screen, not down here.
  */
 export function Composer({
   onSubmit,
-  onFiles,
+  hasRun,
   disabled,
   t,
 }: {
+  /** A message asks a question. No message runs the sample batch. */
   onSubmit: (message?: string) => void;
-  onFiles: (files: File[]) => void;
+  /** Whether there is a batch to ask questions about. */
+  hasRun: boolean;
   disabled: boolean;
   t: Translate;
 }) {
   const [value, setValue] = useState("");
-  const [dragging, setDragging] = useState(false);
-  const input = useRef<HTMLInputElement>(null);
 
   return (
-    <div className="flex flex-col gap-2.5 border-line border-t bg-surface-2 px-4 py-3">
-      {/* biome-ignore lint/a11y/useKeyWithClickEvents: the file input below is the keyboard path */}
-      <div
-        onDragOver={(e) => {
-          e.preventDefault();
-          setDragging(true);
-        }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={(e) => {
-          e.preventDefault();
-          setDragging(false);
-          onFiles(Array.from(e.dataTransfer.files));
-        }}
-        onClick={() => input.current?.click()}
-        className={`flex cursor-pointer flex-wrap items-center gap-3 rounded-md border border-dashed px-3.5 py-3 transition-colors ${
-          dragging ? "border-brass bg-brass/[0.06]" : "border-line-strong"
-        }`}
-      >
-        <p className="text-[13px] text-ink-dim">{t("dropHint")}</p>
-        <input
-          ref={input}
-          type="file"
-          multiple
-          accept="application/pdf"
-          className="hidden"
-          onChange={(e) => onFiles(Array.from(e.target.files ?? []))}
-        />
-        <button
-          type="button"
-          disabled={disabled}
-          onClick={(e) => {
-            e.stopPropagation();
-            onSubmit();
-          }}
-          className="pressable ml-auto cursor-pointer rounded-full border border-brass-deep bg-brass/[0.08] px-2.5 py-1 font-medium text-[12px] text-brass disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brass"
-        >
-          {t("loadBatch")}
-        </button>
-      </div>
-
-      <div className="flex flex-wrap gap-1.5">
-        {(["seed1", "seed2", "seed3"] as const).map((key) => (
+    <div className="flex flex-none flex-col gap-3 border-outline-variant border-t bg-surface-container-low px-8 py-4">
+      {/* Before a batch: the one thing worth doing. After it: the two questions
+          worth asking. Offering "why was FPL-9999 blocked?" on an empty screen
+          invites a click that can only be answered by first running a batch the
+          user never asked for. */}
+      <div className="flex flex-wrap gap-2">
+        {(hasRun ? (["seed2", "seed3"] as const) : (["seed1"] as const)).map((key) => (
           <button
             key={key}
             type="button"
             disabled={disabled}
-            onClick={() => onSubmit(t(key))}
-            className="pressable cursor-pointer rounded-full border border-line bg-surface-3 px-2.5 py-1 text-[12px] text-ink-dim transition-colors hover:border-ink-faint hover:text-ink disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brass"
+            // seed1 is the batch itself, not a question about one.
+            onClick={() => onSubmit(key === "seed1" ? undefined : t(key))}
+            className="state-layer pressable min-h-[40px] cursor-pointer rounded-full border border-outline px-4 text-[15px] text-on-surface-variant transition-colors hover:border-on-surface-variant hover:text-on-surface disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-primary"
           >
             {t(key)}
           </button>
@@ -87,15 +54,26 @@ export function Composer({
           onSubmit(value);
           setValue("");
         }}
-        className="flex items-center gap-2.5 rounded-md border border-line-strong bg-surface-1 px-3 py-2.5 transition-colors focus-within:border-brass-deep"
+        className="flex items-center gap-2 rounded-[10px] border border-outline bg-surface py-2 pr-2 pl-4 transition-colors focus-within:border-primary"
       >
         <input
           value={value}
           onChange={(e) => setValue(e.target.value)}
           placeholder={t("askPlaceholder")}
           aria-label={t("askPlaceholder")}
-          className="flex-1 bg-transparent text-ink outline-none placeholder:text-ink-faint"
+          className="min-h-[40px] flex-1 bg-transparent text-[17px] text-on-surface outline-none placeholder:text-on-surface-faint"
         />
+        {/* The input had no visible action at all - Enter was the only way to
+            send, which nobody watching a projector can see. */}
+        <button
+          type="submit"
+          disabled={disabled || value.trim().length === 0}
+          aria-label={t("send")}
+          title={t("send")}
+          className="state-layer pressable flex h-10 w-10 flex-none cursor-pointer items-center justify-center rounded-[8px] bg-primary text-on-primary transition-opacity disabled:cursor-default disabled:opacity-35 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-on-surface"
+        >
+          <SendIcon className="h-[18px] w-[18px]" />
+        </button>
       </form>
     </div>
   );

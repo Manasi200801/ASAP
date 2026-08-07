@@ -17,11 +17,11 @@ export function SopEditor({
 
   // A newly selected file replaces the draft; re-renders of the same file must
   // not clobber an unsaved edit, so this only resets when the key changes.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally keyed on fileKey only
   useEffect(() => {
     setDraft(content);
     setState("idle");
     setError(null);
-    // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally keyed on fileKey only
   }, [fileKey]);
 
   async function save() {
@@ -39,19 +39,21 @@ export function SopEditor({
   return (
     <div className="flex flex-1 flex-col gap-2.5">
       <div className="flex items-center justify-between">
-        <div className="font-data text-[10.5px] text-ink-faint uppercase tracking-[0.14em]">
+        <div className="font-mono text-[10.5px] text-on-surface-faint uppercase tracking-[0.14em]">
           {fileKey}
         </div>
         <div className="flex items-center gap-2.5">
-          {state === "saved" ? <span className="text-[12px] text-ok">Saved</span> : null}
+          {state === "saved" ? (
+            <span className="text-[12px] text-on-success-container">Saved</span>
+          ) : null}
           {state === "error" && error ? (
-            <span className="text-[12px] text-blocked">{error}</span>
+            <span className="text-[12px] text-on-error-container">{error}</span>
           ) : null}
           <button
             type="button"
             onClick={save}
             disabled={state === "saving"}
-            className="pressable cursor-pointer rounded-full border border-brass-deep bg-brass/[0.08] px-3 py-1 font-medium text-[12px] text-brass disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brass"
+            className="pressable cursor-pointer rounded-full border border-primary/45 bg-primary-container px-3 py-1 font-medium text-[12px] text-on-primary-container disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
           >
             {state === "saving" ? "Saving…" : "Save"}
           </button>
@@ -64,7 +66,7 @@ export function SopEditor({
           setState("idle");
         }}
         spellCheck={false}
-        className="min-h-[420px] flex-1 rounded-md border border-line-strong bg-surface-1 p-3 font-data text-[12.5px] text-ink outline-none focus:border-brass-deep"
+        className="min-h-[420px] flex-1 rounded-md border border-outline bg-surface-container-low p-3 font-mono text-[12.5px] text-on-surface outline-none focus:border-primary/45"
       />
     </div>
   );

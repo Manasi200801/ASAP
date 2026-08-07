@@ -47,11 +47,29 @@ class Extracted:
     # nothing about which id the write has to carry.
     sap_supplier: str = ""
 
+    # The goods receipt this invoice settles, kept from validation so the park
+    # payload can reference it. SAP rejects the write without it wherever the
+    # purchase order uses GR-based invoice verification.
+    gr_document: str = ""
+    gr_year: str = ""
+    gr_item: str = ""
+
+    # The file earlier in this same batch that bills the same supplier invoice.
+    # Nothing in SAP can catch this one: neither has been parked yet, and each
+    # row is assigned its own fresh reference, so both would post cleanly.
+    duplicate_of: str | None = None
+
+    # The SAP document this supplier invoice was already parked as, on an earlier
+    # run. The same document arriving a second time next week is the duplicate
+    # that costs real money, and our own reference cannot see it - that is minted
+    # fresh every run, so it only ever collides with itself.
+    already_parked: str | None = None
+
+    confidence: dict[str, float] = field(default_factory=dict)
+
     def party(self) -> str:
         """Who to address SAP as. Falls back to the printed number."""
         return self.sap_supplier or self.vendor
-
-    confidence: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -74,6 +92,12 @@ class PurchaseOrder:
 class GoodsReceipt:
     document: str
     quantity: str
+    # The material document's own key. Under GR-based invoice verification SAP
+    # refuses to park an item that does not point back at the receipt it is
+    # settling - "Fill in mandatory field 'ReferenceDocument, -FiscalYear,
+    # -Item'" - so all three travel together or the write fails.
+    year: str = ""
+    item: str = ""
 
 
 @dataclass(frozen=True)
