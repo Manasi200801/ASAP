@@ -1,20 +1,17 @@
 {
   "permissions": {
     "allow": [
-      "Bash(node -e ' *)",
-      "Bash(python -m pytest tests/ -q)",
-      "Bash(lsof -ti:3000 -sTCP:LISTEN)",
+      "Bash(git status *)",
+      "Bash(git add *)",
+      "Bash(npx next *)",
+      "Bash(npx vitest *)",
       "Bash(ruff check *)",
-      "Bash(curl -s -o /dev/null -w \"8023: %{http_code}\\\\n\" http://localhost:8023/health --max-time 3)",
+      "Bash(python -m pytest tests/ -q)",
+      "Bash(AWS_PROFILE=workshop .venv/bin/python -m uvicorn app.main:app --port 8023)",
       "Bash(curl -s http://localhost:8000/health --max-time 3)",
       "Bash(curl -s http://localhost:8023/health --max-time 3)",
-      "Bash(ps -o pid,lstart,command -p 69910)",
-      "Bash(rm -f /private/tmp/claude-501/-Users-sidpai-Desktop-seeburg-aug-26-strike/525a0a8a-12c6-abhi26-strike/probe_agent.py 2>/dev/null; rm -f /private/tmp/claude-501/-Users-sidpai-Desktop-seeburg-aug-26-strike/525a0a8a-12c6-48d9-8b62-1c322fcf7b1f/scratchpad/probe_agent.py)",
-      "Bash(lsof -ti:8000 -sTCP:LISTEN)",
-      "Bash(ps -p 69910 -o pid,etime,command)"
-    ],
-    "additionalDirectories": [
-      "/private/tmp/claude-501/-Users-sidpai-Desktop-seeburg-aug-26-strike/525a0a8a-12c6-abhi26-strike"
+      "Bash(lsof -ti:3000 -sTCP:LISTEN)",
+      "Bash(lsof -ti:8000 -sTCP:LISTEN)"
     ]
   }
 }

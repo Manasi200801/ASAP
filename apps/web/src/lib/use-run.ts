@@ -22,6 +22,8 @@ export type Message = {
   text: string;
   streaming?: boolean;
   kind?: "status" | "chat";
+  /** When this bubble was created, client-side - what the chat panel's timestamp reads. */
+  at: number;
 };
 
 /** A file identical to one already seen, and the file it repeats. */
@@ -195,7 +197,10 @@ function apply(run: Run, event: RunEvent): Run {
           messages: [...run.messages.slice(0, -1), { ...last, text: last.text + event.delta }],
         };
       }
-      return { ...run, messages: [...run.messages, { role: "agent", text: event.delta, kind }] };
+      return {
+        ...run,
+        messages: [...run.messages, { role: "agent", text: event.delta, kind, at: Date.now() }],
+      };
     }
 
     case "error":
@@ -355,10 +360,10 @@ export function useRun() {
         answering: true,
         messages: [
           ...prev.messages.map((m) => (m.streaming ? { ...m, streaming: false } : m)),
-          { role: "you", text: message },
+          { role: "you", text: message, at: Date.now() },
           // Explicitly chat: an answer is never process narration, and it is
           // created before the run state could imply that for it.
-          { role: "agent", text: "", streaming: true, kind: "chat" },
+          { role: "agent", text: "", streaming: true, kind: "chat", at: Date.now() },
         ],
       }));
 
