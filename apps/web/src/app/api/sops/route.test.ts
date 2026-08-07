@@ -18,11 +18,15 @@ beforeEach(() => {
 
 describe("GET /api/sops", () => {
   it("returns the file list", async () => {
-    listSops.mockResolvedValue([{ key: "a.md", size: 10, lastModified: "2026-08-06T00:00:00.000Z" }]);
+    listSops.mockResolvedValue([
+      { key: "a.md", size: 10, lastModified: "2026-08-06T00:00:00.000Z" },
+    ]);
     const response = await GET();
     expect(response.status).toBe(200);
     const body = await response.json();
-    expect(body.files).toEqual([{ key: "a.md", size: 10, lastModified: "2026-08-06T00:00:00.000Z" }]);
+    expect(body.files).toEqual([
+      { key: "a.md", size: 10, lastModified: "2026-08-06T00:00:00.000Z" },
+    ]);
   });
 
   it("maps AWS errors to the mapped status and message", async () => {

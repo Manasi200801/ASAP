@@ -1,15 +1,15 @@
 import {
-  GetObjectCommand,
-  ListObjectsV2Command,
-  PutObjectCommand,
-  S3Client,
-} from "@aws-sdk/client-s3";
-import {
   BedrockAgentClient,
   GetIngestionJobCommand,
   ListDataSourcesCommand,
   StartIngestionJobCommand,
 } from "@aws-sdk/client-bedrock-agent";
+import {
+  GetObjectCommand,
+  ListObjectsV2Command,
+  PutObjectCommand,
+  S3Client,
+} from "@aws-sdk/client-s3";
 import type { SopFile } from "./sop-types";
 
 const BUCKET = process.env.SOP_BUCKET ?? "516359819848-sops";

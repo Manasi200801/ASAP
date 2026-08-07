@@ -10,9 +10,9 @@ import { Spinner } from "@/components/spinner";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { MAX_FILES } from "@/lib/events";
 import { useLocale } from "@/lib/i18n";
-import Link from "next/link";
 import type { Duplicate } from "@/lib/use-run";
 import { useRun } from "@/lib/use-run";
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 // Both top actions read as one pair, not "the important one" and "the other

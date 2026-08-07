@@ -2,10 +2,7 @@ import { awsErrorMessage, getSop, putSop } from "@/lib/sops";
 
 export const runtime = "nodejs";
 
-export async function GET(
-  _request: Request,
-  { params }: { params: Promise<{ key: string }> },
-) {
+export async function GET(_request: Request, { params }: { params: Promise<{ key: string }> }) {
   const { key } = await params;
   const decoded = decodeURIComponent(key);
   try {
@@ -17,10 +14,7 @@ export async function GET(
   }
 }
 
-export async function PUT(
-  request: Request,
-  { params }: { params: Promise<{ key: string }> },
-) {
+export async function PUT(request: Request, { params }: { params: Promise<{ key: string }> }) {
   const { key } = await params;
   const decoded = decodeURIComponent(key);
   if (!decoded.endsWith(".md")) {

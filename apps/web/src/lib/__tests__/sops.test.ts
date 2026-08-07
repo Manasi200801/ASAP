@@ -102,16 +102,24 @@ describe("getSyncStatus", () => {
     const status = await getSyncStatus("job-1", "ds-1");
     expect(status).toEqual({
       status: "COMPLETE",
-      statistics: { documentsScanned: 3, documentsIndexed: 2, documentsFailed: 0, documentsSkipped: 1 },
+      statistics: {
+        documentsScanned: 3,
+        documentsIndexed: 2,
+        documentsFailed: 0,
+        documentsSkipped: 1,
+      },
     });
   });
 });
 
 describe("awsErrorMessage", () => {
   it("maps an expired token error to a friendly message", () => {
-    const error = Object.assign(new Error("The security token included in the request is expired"), {
-      name: "ExpiredTokenException",
-    });
+    const error = Object.assign(
+      new Error("The security token included in the request is expired"),
+      {
+        name: "ExpiredTokenException",
+      },
+    );
     expect(awsErrorMessage(error)).toEqual({
       message: "AWS credentials expired — re-copy the workshop profile from Workshop Studio.",
       status: 502,
