@@ -70,5 +70,6 @@
   "emptyBody": "Drop invoice PDFs or photos into the bar above, or load the sample batch to watch a full run end to end.",
   "emptyStep1": "Reads each document and pulls out the supplier, purchase order, quantities and amounts.",
   "emptyStep2": "Runs 16 checks against live S/4HANA — 13 arithmetic and lookup, 3 judged by the model.",
-  "emptyStep3": "Stops at one approval. Approving parks drafts in SAP. Nothing is ever paid automatically."
+  "emptyStep3": "Stops at one approval. Approving parks drafts in SAP. Nothing is ever paid automatically.",
+  "sopsLink": "Policies"
 }

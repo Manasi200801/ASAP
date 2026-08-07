@@ -70,5 +70,6 @@
   "emptyBody": "Legen Sie Rechnungen als PDF oder Foto in der Leiste oben ab – oder laden Sie den Beispielstapel und sehen Sie einen kompletten Lauf.",
   "emptyStep1": "Liest jedes Dokument und entnimmt Lieferant, Bestellung, Mengen und Beträge.",
   "emptyStep2": "Führt 16 Prüfungen gegen das Live-S/4HANA aus — 13 rechnerisch und per Nachschlag, 3 vom Modell beurteilt.",
-  "emptyStep3": "Hält bei einer einzigen Freigabe an. Die Freigabe parkt Entwürfe in SAP. Es wird nie automatisch bezahlt."
+  "emptyStep3": "Hält bei einer einzigen Freigabe an. Die Freigabe parkt Entwürfe in SAP. Es wird nie automatisch bezahlt.",
+  "sopsLink": "Richtlinien"
 }

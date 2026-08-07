@@ -10,6 +10,7 @@ import { Spinner } from "@/components/spinner";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { MAX_FILES } from "@/lib/events";
 import { useLocale } from "@/lib/i18n";
+import Link from "next/link";
 import type { Duplicate } from "@/lib/use-run";
 import { useRun } from "@/lib/use-run";
 import { useEffect, useRef, useState } from "react";
@@ -164,6 +165,15 @@ export default function Page() {
         </div>
 
         <div className="ml-auto flex items-center gap-3">
+          {/* The policies rule 9 reads. Kept in the header rather than buried,
+              because "the tolerance is a document you can edit, and the agent
+              re-reads it" is the point - not a settings page nobody opens. */}
+          <Link
+            href="/sops"
+            className="state-layer pressable rounded-full border border-on-header/30 px-4 py-2 font-medium text-[15px] text-on-header transition-colors hover:border-on-header/60 hover:bg-on-header/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-on-header"
+          >
+            {t("sopsLink")}
+          </Link>
           <LocaleSwitch locale={locale} onChange={setLocale} />
           <ThemeToggle
             theme={theme}
