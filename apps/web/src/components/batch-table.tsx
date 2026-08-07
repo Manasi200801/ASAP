@@ -12,6 +12,7 @@ const STATUS_TONE: Record<InvoiceRow["status"], string> = {
   ready: "text-ok",
   blocked: "text-blocked",
   parked: "text-brass",
+  refused: "text-blocked",
 };
 
 const DOT_TONE: Record<InvoiceRow["status"], string> = {
@@ -19,6 +20,7 @@ const DOT_TONE: Record<InvoiceRow["status"], string> = {
   ready: "bg-ok",
   blocked: "bg-blocked",
   parked: "bg-brass",
+  refused: "bg-blocked",
 };
 
 export function BatchTable({
@@ -47,8 +49,11 @@ export function BatchTable({
       </div>
 
       {invoices.map((invoice) => {
-        // A blocked invoice opens itself and stays open. Everything else is on demand.
-        const isOpen = open[invoice.invoiceId] ?? invoice.status === "blocked";
+        // A blocked or refused invoice opens itself and stays open. A refusal
+        // that stays collapsed is a failure nobody reads.
+        const isOpen =
+          open[invoice.invoiceId] ??
+          (invoice.status === "blocked" || invoice.status === "refused");
         const passed = invoice.rules.filter((r) => r.status === "pass").length;
         const evaluated = invoice.rules.filter((r) => r.status !== "skip").length;
 
@@ -56,7 +61,9 @@ export function BatchTable({
           <div
             key={invoice.invoiceId}
             className={`enter border-line border-b last:border-b-0 ${
-              invoice.status === "blocked" ? "bg-blocked/[0.055]" : ""
+              invoice.status === "blocked" || invoice.status === "refused"
+                ? "bg-blocked/[0.055]"
+                : ""
             }`}
           >
             <button
@@ -100,10 +107,23 @@ export function BatchTable({
               <div>
                 <RuleChips rules={invoice.rules} t={t} />
 
+                {invoice.postingError ? (
+                  <div className="mx-3 mb-3.5 border-blocked border-l-2 pl-3">
+                    <p className="max-w-[62ch] text-blocked">{t("postingRefused")}</p>
+                    {/* SAP's own words. Paraphrasing a write failure is how the
+                        actual cause gets lost between the system and the person
+                        who has to do something about it. */}
+                    <p className="mt-1 max-w-[62ch] font-data text-[12px] text-ink-dim">
+                      {invoice.postingError}
+                    </p>
+                    <p className="mt-1 max-w-[62ch] text-ink-dim">{t("postingRefusedImpact")}</p>
+                  </div>
+                ) : null}
+
                 {invoice.filed ? (
                   <p className="mx-3 mb-3 font-data text-[11px] text-ink-faint">
                     {invoice.filed.status === "error"
-                      ? t("filedError")
+                      ? `${t("filedError")}${invoice.filed.message ? ` — ${invoice.filed.message}` : ""}`
                       : t(invoice.filed.status === "moved" ? "filedMoved" : "filedKept", {
                           bucket: invoice.filed.bucket ?? "",
                         })}

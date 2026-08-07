@@ -373,6 +373,7 @@ async def post_run(
     await asyncio.sleep(BEAT * 0.7)
 
     parked_ids: list[str] = []
+    refused: list[str] = []
 
     for index, inv in enumerate(run.invoices):
         if inv.invoice_id not in posting:
@@ -390,6 +391,7 @@ async def post_run(
             # One failure never stops the batch - that is the whole point of the
             # per-invoice gate.
             log.error("%s %s park failed: %s", run.run_id, inv.invoice_id, error)
+            refused.append(inv.invoice_id)
             yield ev.Posting(invoiceId=inv.invoice_id, status="error", message=str(error))
             continue
 
@@ -415,12 +417,21 @@ async def post_run(
         yield event
 
     run.state = "done"
-    yield ev.Text(
-        delta=(
-            f"{len(parked_ids)} parked documents in SAP, fiscal year 2025. "
-            f"{len(run.blocked) - len(rejected) - len(overridden)} still open."
+
+    # A refusal has to be in this sentence. Reporting "0 parked" and stopping
+    # describes a batch where nothing needed posting, which is the opposite of
+    # one where SAP turned everything down - and it is the last line the user
+    # reads before deciding the run went fine.
+    still_open = len(run.blocked) - len(rejected) - len(overridden)
+    parts = [f"{len(parked_ids)} parked documents in SAP, fiscal year 2025."]
+    if refused:
+        parts.append(
+            f"SAP refused {len(refused)}: {', '.join(refused)}. "
+            "Nothing was written for those - see each row for what SAP said."
         )
-    )
+    if still_open:
+        parts.append(f"{still_open} still open.")
+    yield ev.Text(delta=" ".join(parts))
 
 
 async def _file_batch(

@@ -110,10 +110,12 @@ function apply(run: Run, event: RunEvent): Run {
           // Derive from the chips rather than waiting for `invoice-status`. A row
           // must turn red on the failing chip, mid-cascade — that is the moment
           // the whole interface exists to show. Parked never regresses.
+          // Settled verdicts never regress to a derived one.
+          const settled = i.status === "parked" || i.status === "refused";
           return {
             ...i,
             rules,
-            status: i.status === "parked" ? i.status : deriveStatus(rules),
+            status: settled ? i.status : deriveStatus(rules),
           };
         }),
       };
@@ -150,17 +152,22 @@ function apply(run: Run, event: RunEvent): Run {
       return {
         ...run,
         state: "posting",
-        invoices: run.invoices.map((i) =>
-          i.invoiceId === event.invoiceId
-            ? {
-                ...i,
-                status: event.status === "parked" ? "parked" : i.status,
-                sapDocument: event.sapDocument,
-                fiscalYear: event.fiscalYear,
-                reference: event.reference,
-              }
-            : i,
-        ),
+        invoices: run.invoices.map((i) => {
+          if (i.invoiceId !== event.invoiceId) return i;
+          // A refused park has to change the row. Keeping it on `ready` leaves a
+          // green row for an invoice SAP rejected, and the message - the only
+          // thing that says why - was being dropped on the floor entirely.
+          const status =
+            event.status === "parked" ? "parked" : event.status === "error" ? "refused" : i.status;
+          return {
+            ...i,
+            status,
+            postingError: event.status === "error" ? event.message : i.postingError,
+            sapDocument: event.sapDocument,
+            fiscalYear: event.fiscalYear,
+            reference: event.reference,
+          };
+        }),
       };
 
     case "filed":
@@ -168,7 +175,10 @@ function apply(run: Run, event: RunEvent): Run {
         ...run,
         invoices: run.invoices.map((i) =>
           i.invoiceId === event.invoiceId
-            ? { ...i, filed: { status: event.status, bucket: event.bucket } }
+            ? {
+                ...i,
+                filed: { status: event.status, bucket: event.bucket, message: event.message },
+              }
             : i,
         ),
       };

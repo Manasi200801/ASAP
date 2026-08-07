@@ -127,4 +127,15 @@ def blocked_bucket() -> str:
 def build_mover() -> Mover:
     if os.getenv("STORAGE_BACKEND", "fake") == "s3":
         return S3Mover(region=os.getenv("AWS_REGION", "us-east-1"))
+
+    if os.getenv("EXTRACT_BACKEND", "sample") == "bedrock":
+        # Real PDFs read out of a real bucket, and a mover that only pretends.
+        # FakeMover still reports `moved`, so the interface says "Filed to
+        # ...-processed-invoice" over a file that never went anywhere. Anyone
+        # hitting this combination almost certainly copied .env.local before
+        # STORAGE_BACKEND existed.
+        log.warning(
+            "STORAGE_BACKEND=fake with EXTRACT_BACKEND=bedrock: invoices are read from S3 but "
+            "nothing will actually be filed. Set STORAGE_BACKEND=s3."
+        )
     return FakeMover()

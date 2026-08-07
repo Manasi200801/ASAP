@@ -165,6 +165,26 @@ def test_an_override_sap_refuses_stays_in_the_upload_bucket() -> None:
     assert mover.moves == []
 
 
+def test_a_refusal_is_reported_to_the_person_not_just_the_log() -> None:
+    """"0 parked" and nothing else describes an empty batch, not a rejected one."""
+
+    class RefusingSap(FakeSap):
+        async def park(self, payload: dict):
+            raise SapError("Reference 516359819848-55 already exists for supplier 17401710")
+
+    events, _ = asyncio.run(settled(sap=RefusingSap()))
+
+    failures = [e for e in events if isinstance(e, ev.Posting) and e.status == "error"]
+    assert len(failures) == 5, "every refused invoice needs its own event"
+    assert all("already exists" in (e.message or "") for e in failures), (
+        "SAP's own words must reach the wire - a paraphrase loses the cause"
+    )
+
+    closing = [e for e in events if isinstance(e, ev.Text)][-1].delta
+    assert "refused 5" in closing, closing
+    assert "0 parked" in closing, closing
+
+
 def test_an_explicit_rejection_is_filed_as_blocked() -> None:
     events, _ = asyncio.run(settled(rejects=["FPL-9999"]))
 

@@ -162,7 +162,11 @@ export type RunState =
 
 export type InvoiceRow = InvoiceEvent & {
   rules: RuleEvent[];
-  status: "pending" | "ready" | "blocked" | "parked";
+  // `refused` is SAP rejecting the park, which is not the same as the checks
+  // blocking it: the invoice passed everything we can test and was still turned
+  // down at the write. Leaving such a row green is how a failed batch reads as a
+  // successful one.
+  status: "pending" | "ready" | "blocked" | "parked" | "refused";
   headline?: string;
   impact?: string;
   detail?: string;
@@ -174,8 +178,10 @@ export type InvoiceRow = InvoiceEvent & {
   // nothing happens until Approve is pressed, which is what keeps the gate
   // single.
   decision?: "override" | "reject";
+  // What SAP said when it refused the park, verbatim.
+  postingError?: string;
   // Where the PDF was filed once the batch settled.
-  filed?: { status: "moved" | "kept" | "error"; bucket?: string };
+  filed?: { status: "moved" | "kept" | "error"; bucket?: string; message?: string };
 };
 
 /** Derive an invoice's overall status from its rule results. */
