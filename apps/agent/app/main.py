@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import pathlib
+import time
 from typing import AsyncIterator
 
 from fastapi import FastAPI
@@ -91,6 +92,39 @@ judge = build_judge()
 db.init()
 
 log.info("backends: sap=%s judge=%s, db=%s", type(sap).__name__, type(judge).__name__, db.path())
+
+
+@app.on_event("startup")
+async def warm_up() -> None:
+    """Pay the one-off costs at boot instead of on the first invoice.
+
+    The first invoice of a run was taking ~21 seconds while every later one took
+    about one, and the difference is not the invoice - it is everything being set
+    up for the first time behind it: a Secrets Manager read, a Cognito token
+    mint, the first TLS handshake to AgentCore, and a knowledge base retrieval
+    that is then cached for the life of the process.
+
+    None of that depends on the documents, so none of it should be on the clock
+    while a person watches the first row sit on "checking". Failures here are
+    logged and ignored: a warm-up that cannot reach the network must not stop the
+    agent from starting, because the run will surface that properly anyway.
+    """
+    import asyncio
+
+    async def token() -> None:
+        if hasattr(sap, "_bearer"):
+            await asyncio.to_thread(sap._bearer)
+
+    async def policy() -> None:
+        if hasattr(judge, "_sop"):
+            await asyncio.to_thread(judge._sop, "price tolerance for supplier invoices")
+
+    started = time.perf_counter()
+    results = await asyncio.gather(token(), policy(), return_exceptions=True)
+    for name, result in zip(("sap token", "sop policy"), results):
+        if isinstance(result, Exception):
+            log.warning("warm-up: %s unavailable (%s)", name, result)
+    log.info("warm-up finished in %.1fs", time.perf_counter() - started)
 
 
 async def sse(events: AsyncIterator[ev.Event]) -> AsyncIterator[bytes]:
