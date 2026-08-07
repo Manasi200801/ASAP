@@ -12,6 +12,7 @@ import { MAX_FILES } from "@/lib/events";
 import { useLocale } from "@/lib/i18n";
 import type { Duplicate } from "@/lib/use-run";
 import { useRun } from "@/lib/use-run";
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 // Both top actions read as one pair, not "the important one" and "the other
@@ -164,6 +165,15 @@ export default function Page() {
         </div>
 
         <div className="ml-auto flex items-center gap-3">
+          {/* The policies rule 9 reads. Kept in the header rather than buried,
+              because "the tolerance is a document you can edit, and the agent
+              re-reads it" is the point - not a settings page nobody opens. */}
+          <Link
+            href="/sops"
+            className="state-layer pressable rounded-full border border-on-header/30 px-4 py-2 font-medium text-[15px] text-on-header transition-colors hover:border-on-header/60 hover:bg-on-header/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-on-header"
+          >
+            {t("sopsLink")}
+          </Link>
           <LocaleSwitch locale={locale} onChange={setLocale} />
           <ThemeToggle
             theme={theme}
@@ -340,7 +350,11 @@ export default function Page() {
 
           {(run.state === "awaiting-approval" && remainingReadyIds.length > 0) ||
           (run.state === "posting" && run.parkingIds.length > 1) ? (
-            <div className="flex flex-none justify-center border-outline-variant border-t bg-surface-container-low px-8 py-4">
+            // A bar across the pane, not a card centred over it: the gate has to
+            // be impossible to scroll past without being something the batch
+            // scrolls underneath. The primary-tinted top edge is what marks it
+            // as the one place the run stops.
+            <div className="flex flex-none border-primary/30 border-t bg-surface-container-low px-8 py-3">
               <ApprovalCard
                 // While a batch approval is in flight, show how many are
                 // actually being parked right now, not the original count -
