@@ -13,17 +13,13 @@ export function ThemeToggle({
 }) {
   const isLight = theme === "light";
 
-  // Hover brightens the label rather than turning it `primary`: orange on the
-  // light theme's blue header is 2.8:1, which is a hover state nobody can read
-  // across a room. Same reasoning for the focus ring, which is `on-header`
-  // because an orange ring on an orange-accented blue bar disappears.
   return (
     <button
       type="button"
       onClick={onToggle}
       aria-label={t("toggleTheme")}
       title={isLight ? t("themeLight") : t("themeDark")}
-      className="pressable relative flex h-10 w-10 flex-none cursor-pointer items-center justify-center rounded-full border border-on-header/30 bg-on-header/10 text-on-header/80 transition-colors hover:bg-on-header/20 hover:text-on-header focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-on-header"
+      className="pressable relative flex h-10 w-10 flex-none cursor-pointer items-center justify-center rounded-full border border-outline-variant bg-surface-container text-on-surface-variant transition-colors hover:border-outline hover:text-on-surface focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
     >
       <span className="relative block h-[18px] w-[18px]" aria-hidden="true">
         <span
