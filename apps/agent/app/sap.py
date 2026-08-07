@@ -252,7 +252,19 @@ class McpSap:
         # step back through the secret's versions is the fix, and it is worth
         # trying before reporting an outage that is really a re-provisioned
         # workshop.
-        if response.status_code == 401 and "iss" in response.text and self._fall_back_a_version():
+        #
+        # A batch fires several lookups concurrently, so more than one of them
+        # discovers this at once. `_fall_back_a_version` only *flips* the
+        # shared secret stage once - it returns `False` for every call that
+        # lands the same 401 a moment after the first one already flipped it,
+        # not because retrying would not help, but only because someone else
+        # already did the flipping. Retrying is unconditional here: each call
+        # still needs its own second attempt with whatever bearer token is
+        # current now, or it reports a permanent failure for a problem a
+        # sibling call already fixed. `_bearer()` returns the already-cached
+        # corrected token immediately when another call fetched it first.
+        if response.status_code == 401 and "iss" in response.text:
+            self._fall_back_a_version()
             response = requests.post(
                 endpoint,
                 headers={"authorization": f"Bearer {self._bearer()}", **headers},
@@ -365,7 +377,15 @@ class McpSap:
             tax_code=line.get("TaxCode") if line else None,
             blocked=bool(line.get("PurchasingDocumentDeletionCode")) if line else False,
             fully_invoiced=bool(line.get("IsFinallyInvoiced")) if line else False,
-            gr_based_invoicing=bool(line.get("IsGoodsReceiptBased", True)) if line else True,
+            # SAP's real field is `InvoiceIsGoodsReceiptBased` - the plain
+            # `IsGoodsReceiptBased` this used to read simply does not exist on
+            # A_PurchaseOrderItem, so `.get(..., True)` silently fell through to
+            # its default on every PO, always. Confirmed live: PO 4500001463's
+            # item reports `InvoiceIsGoodsReceiptBased: false`, and every park
+            # attempt for it failed with "Only fill fields 'ReferenceDocument,
+            # -FiscalYear, -Item' ... if GR-based IV is active" - SAP rejecting
+            # exactly the fields this flag exists to gate.
+            gr_based_invoicing=bool(line.get("InvoiceIsGoodsReceiptBased", True)) if line else True,
         )
 
     async def goods_receipt(self, number: str, item: str) -> GoodsReceipt | None:

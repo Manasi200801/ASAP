@@ -236,6 +236,70 @@ body {
   animation: call-in calc(160ms * var(--m)) var(--ease-out) forwards;
 }
 
+/* ---- chat bubbles: arrive from the side they sit on, not straight up -----
+
+   The same distance and duration as `.call-in`, but horizontal and signed by
+   speaker: a sent bubble drifts in from the right it's aligned to, a received
+   one from the left, so the motion itself echoes which side just spoke
+   instead of every bubble entering identically regardless of who sent it. */
+
+@keyframes bubble-in-you {
+  from {
+    opacity: 0;
+    transform: translate(10px, 4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes bubble-in-agent {
+  from {
+    opacity: 0;
+    transform: translate(-10px, 4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.bubble-in-you {
+  animation: bubble-in-you calc(220ms * var(--m)) var(--ease-out) both;
+}
+
+.bubble-in-agent {
+  animation: bubble-in-agent calc(220ms * var(--m)) var(--ease-out) both;
+}
+
+/* ---- typing indicator: three dots, each a beat behind the last ---- */
+
+@keyframes typing-dot {
+  0%,
+  60%,
+  100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+
+.typing-dot {
+  animation: typing-dot calc(1100ms * var(--m)) var(--ease-in-out) infinite;
+}
+
+.typing-dot:nth-child(2) {
+  animation-delay: calc(150ms * var(--m));
+}
+
+.typing-dot:nth-child(3) {
+  animation-delay: calc(300ms * var(--m));
+}
+
 /* ---- the passed-checks counter, re-keyed on every increment ---- */
 
 @keyframes tick {
@@ -429,10 +493,18 @@ body {
   .tick,
   .rule-in,
   .gate-in,
-  .gate-halo {
+  .gate-halo,
+  .bubble-in-you,
+  .bubble-in-agent {
     animation: none;
     opacity: 1;
     transform: none;
+  }
+  /* Same reasoning as the spinner below: three dots frozen mid-bounce reads as
+     stuck, so this slows instead of stopping - it is still reporting that an
+     answer is on its way. */
+  .typing-dot {
+    animation-duration: 2.4s;
   }
   /* The blocked row keeps its resting tint - the meaning was never in the
      movement - it just does not wash in. */

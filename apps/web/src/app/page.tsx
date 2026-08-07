@@ -13,7 +13,7 @@ import { Topbar } from "@/components/topbar";
 import { ValidationQueueView } from "@/components/validation-queue";
 import { MAX_FILES } from "@/lib/events";
 import { useLocale } from "@/lib/i18n";
-import type { Duplicate } from "@/lib/use-run";
+import type { Duplicate, Run } from "@/lib/use-run";
 import { useRun } from "@/lib/use-run";
 import { useEffect, useRef, useState } from "react";
 
@@ -30,12 +30,26 @@ export default function Page() {
   const [search, setSearch] = useState("");
   const [chatOpen, setChatOpen] = useState(false);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [isSample, setIsSample] = useState(false);
+  // Blocked invoice ids the clerk has already opened the bell dropdown for -
+  // the badge counts what is new since the last time it was opened, not "how
+  // many are blocked right now" forever.
+  const [seenBlockedIds, setSeenBlockedIds] = useState<Set<string>>(new Set());
+  // Invoice id -> presigned S3 GET, for documents this browser tab did not
+  // itself drop (a page reload, or a run someone else's upload started) but
+  // that genuinely exist in the bucket `/api/upload` wrote them to.
+  const [s3Previews, setS3Previews] = useState<Record<string, string>>({});
   const fileInput = useRef<HTMLInputElement>(null);
   // Filename -> object URL, for documents actually dropped in this browser
-  // session. The sample batch and anything from an earlier reload has no
-  // File object to build one from, and the detail view says so rather than
-  // showing a placeholder image in its place.
+  // session. Cheaper than a round trip to S3 and available before the upload
+  // has even finished, so it is tried first; the presigned fetch below only
+  // runs for invoices it does not cover.
   const previewUrls = useRef<Map<string, string>>(new Map());
+  const previewRequested = useRef<Set<string>>(new Set());
+  // Which runs have already been written to history - a run logged the
+  // moment it finishes parking must not be logged again when it is replaced
+  // by the next one.
+  const loggedRunIds = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     const saved = window.localStorage.getItem("theme");
@@ -53,6 +67,34 @@ export default function Page() {
       for (const url of map.values()) URL.revokeObjectURL(url);
     };
   }, []);
+
+  // A real batch's documents live at `runs/<runId>/<file>`; the sample
+  // batch's live at the bucket root - the workshop stack provisions all six
+  // `fpl-invoice-0{1..6}.pdf` originals there, so this needs no run to scope
+  // a key to and no copy of its own.
+  useEffect(() => {
+    if (!isSample && !run.runId) return;
+    for (const invoice of run.invoices) {
+      if (previewUrls.current.has(invoice.file)) continue;
+      if (previewRequested.current.has(invoice.invoiceId)) continue;
+      previewRequested.current.add(invoice.invoiceId);
+
+      const query = isSample
+        ? `sample=true&file=${encodeURIComponent(invoice.file)}`
+        : `runId=${encodeURIComponent(run.runId ?? "")}&file=${encodeURIComponent(invoice.file)}`;
+
+      fetch(`/api/preview?${query}`)
+        .then((response) => (response.ok ? response.json() : null))
+        .then((body: { url: string } | null) => {
+          if (!body) return;
+          setS3Previews((prev) => ({ ...prev, [invoice.invoiceId]: body.url }));
+        })
+        .catch(() => {
+          // No preview beats a broken one - the "not available" state already
+          // covers this.
+        });
+    }
+  }, [run.runId, run.invoices, isSample]);
 
   // The first invoice a run produces is opened automatically - a queue with
   // six rows and nothing selected makes the clerk click before they can read
@@ -79,6 +121,7 @@ export default function Page() {
   const blockedInvoices = run.invoices.filter(
     (i) => i.status === "blocked" || i.status === "parkError",
   );
+  const unseenBlockedCount = blockedInvoices.filter((i) => !seenBlockedIds.has(i.invoiceId)).length;
 
   const queryMatches = (invoice: (typeof run.invoices)[number]) => {
     const query = search.trim().toLowerCase();
@@ -92,23 +135,43 @@ export default function Page() {
   function clearPreviews() {
     for (const url of previewUrls.current.values()) URL.revokeObjectURL(url);
     previewUrls.current = new Map();
+    previewRequested.current = new Set();
+    setS3Previews({});
+    setSeenBlockedIds(new Set());
   }
 
-  // The run on screen becomes a history entry the moment it is about to be
-  // replaced, never before - a run still being watched is not history yet.
+  // Logged once per run, from whichever happens first: the run finishing on
+  // its own (every ready invoice parked) or the clerk replacing it with a new
+  // one before that ever happened. Either way a run is never logged twice -
+  // `loggedRunIds` is what the "done" watcher and a reset agree on.
+  function logToHistory(toLog: Run) {
+    if (toLog.invoices.length === 0 || !toLog.runId) return;
+    if (loggedRunIds.current.has(toLog.runId)) return;
+    loggedRunIds.current.add(toLog.runId);
+    setHistory((prev) => [
+      {
+        runId: toLog.runId ?? "unknown",
+        reference: toLog.reference,
+        at: Date.now(),
+        invoices: toLog.invoices,
+        summary: toLog.summary,
+      },
+      ...prev,
+    ]);
+  }
+
+  // The moment every ready invoice has actually been parked - not "approved",
+  // parked - this run is complete and belongs in history whether or not the
+  // clerk ever starts another one. `logToHistory` is not memoized, but it
+  // only touches a ref and a setter, both stable, so omitting it here never
+  // hides a real dependency.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: see above
+  useEffect(() => {
+    if (run.state === "done") logToHistory(run);
+  }, [run]);
+
   function resetForNewRun() {
-    if (run.invoices.length > 0) {
-      setHistory((prev) => [
-        {
-          runId: run.runId ?? "unknown",
-          reference: run.reference,
-          at: Date.now(),
-          invoices: run.invoices,
-          summary: run.summary,
-        },
-        ...prev,
-      ]);
-    }
+    logToHistory(run);
     clearPreviews();
     setSelectedInvoiceId(null);
     reset();
@@ -118,6 +181,7 @@ export default function Page() {
     resetForNewRun();
     setFiles([]);
     setRepeats([]);
+    setIsSample(true);
     setView("queue");
     await start(locale, undefined, { sample: true });
   }
@@ -134,6 +198,7 @@ export default function Page() {
     const runId = `r_${Math.random().toString(36).slice(2, 8)}`;
     resetForNewRun();
     setRepeats([]);
+    setIsSample(false);
     setFiles(dropped.map((f) => f.name));
     for (const file of dropped) {
       previewUrls.current.set(file.name, URL.createObjectURL(file));
@@ -160,7 +225,7 @@ export default function Page() {
 
   const previewMap: Record<string, string> = {};
   for (const invoice of run.invoices) {
-    const url = previewUrls.current.get(invoice.file);
+    const url = previewUrls.current.get(invoice.file) ?? s3Previews[invoice.invoiceId];
     if (url) previewMap[invoice.invoiceId] = url;
   }
 
@@ -188,6 +253,10 @@ export default function Page() {
           search={search}
           onSearch={setSearch}
           blocked={blockedInvoices}
+          unseenCount={unseenBlockedCount}
+          onOpenNotifications={() =>
+            setSeenBlockedIds(new Set(blockedInvoices.map((i) => i.invoiceId)))
+          }
           onSelectInvoice={(id) => {
             setSelectedInvoiceId(id);
             setView("queue");
@@ -274,7 +343,14 @@ export default function Page() {
               approvable={approvable}
               parkingIds={run.parkingIds}
               onApprove={(id) => approve([id])}
-              onAsk={(question) => ask(locale, question)}
+              onAsk={(question) => {
+                // These buttons put a real question to the agent, and the
+                // answer lands in the chat panel - opening it is what makes
+                // that visible instead of a click that appears to do nothing
+                // while the panel sits closed off-screen.
+                setChatOpen(true);
+                ask(locale, question);
+              }}
               asking={busy || run.answering}
               previewUrls={previewMap}
               t={t}

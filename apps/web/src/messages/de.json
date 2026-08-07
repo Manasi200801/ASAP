@@ -7,6 +7,8 @@
   "railHead": "SAP · Live-Aufrufe",
   "you": "Sie",
   "agent": "Agent",
+  "agentTyping": "Agent schreibt…",
+  "close": "Schließen",
   "dropHint": "Rechnungen hier ablegen (PDF oder Bild) oder eine Frage stellen.",
   "loadBatch": "Beispielstapel laden",
   "seed1": "FPL-Stapel verarbeiten",

@@ -322,7 +322,16 @@ async def validate_run(
         # Kept for the park payload. Under GR-based invoice verification SAP
         # rejects an item that does not point back at the receipt it settles, and
         # this is the only moment the receipt is in hand.
-        if gr is not None:
+        #
+        # The reverse is just as real and was missing: when the order is *not*
+        # GR-based, SAP rejects the write just as hard for the opposite reason -
+        # "Only fill fields 'ReferenceDocument, -FiscalYear, -Item' ... if
+        # GR-based IV is active." A receipt can exist in SAP for an order that
+        # doesn't require one (a goods movement posted for other reasons), and
+        # `sap.goods_receipt` is looked up unconditionally - so this must gate on
+        # what the order actually requires, not on whether a receipt happened to
+        # come back.
+        if gr is not None and po is not None and po.gr_based_invoicing:
             inv.gr_document, inv.gr_year, inv.gr_item = gr.document, gr.year, gr.item
 
         failures: list[RuleResult] = []

@@ -39,6 +39,10 @@ function formatDuration(ms: number) {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
+function isPdf(filename: string) {
+  return filename.toLowerCase().endsWith(".pdf");
+}
+
 function QueueList({
   invoices,
   selectedId,
@@ -240,17 +244,31 @@ export function ValidationQueueView({
               <div className="font-semibold text-[13px] text-on-surface-variant uppercase tracking-[0.1em]">
                 {t("originalDocument")}
               </div>
-              <div className="flex min-h-[280px] flex-1 items-center justify-center overflow-hidden rounded-[10px] border border-outline-variant bg-surface">
+              <div className="flex min-h-[280px] flex-1 overflow-hidden rounded-[10px] border border-outline-variant bg-surface">
                 {previewUrl ? (
-                  // A blob: URL from an in-memory File, never a remote asset - nothing here for
-                  // Next's image pipeline to optimize.
-                  <img
-                    src={previewUrl}
-                    alt={selected.file}
-                    className="max-h-[420px] w-full object-contain"
-                  />
+                  isPdf(selected.file) ? (
+                    // `<img>` silently renders nothing for a PDF blob - the browser's own
+                    // PDF viewer is what actually shows it, and only an iframe/embed can
+                    // host that. `h-full` (not a fixed px height) is what makes it fill
+                    // the pane instead of sitting centred in a taller box - the sibling
+                    // "Extracted vs SAP" column is usually taller, and a grid row
+                    // stretches both columns to match it.
+                    <iframe
+                      src={previewUrl}
+                      title={selected.file}
+                      className="h-full w-full border-0"
+                    />
+                  ) : (
+                    // A blob: URL from an in-memory File, never a remote asset - nothing
+                    // here for Next's image pipeline to optimize.
+                    <img
+                      src={previewUrl}
+                      alt={selected.file}
+                      className="h-full w-full object-contain"
+                    />
+                  )
                 ) : (
-                  <div className="flex flex-col items-center gap-2 px-6 py-10 text-center">
+                  <div className="flex w-full flex-col items-center justify-center gap-2 px-6 py-10 text-center">
                     <DocumentIcon className="h-8 w-8 text-on-surface-faint" />
                     <span className="text-[13px] text-on-surface-faint">
                       {t("previewUnavailable")}

@@ -54,7 +54,7 @@ export function Composer({
           onSubmit(value);
           setValue("");
         }}
-        className="flex items-center gap-2 rounded-[10px] border border-outline bg-surface py-2 pr-2 pl-4 transition-colors focus-within:border-primary"
+        className="flex items-center gap-2 rounded-full border border-outline bg-surface py-2 pr-2 pl-4 transition-colors focus-within:border-primary"
       >
         <input
           value={value}
@@ -70,7 +70,7 @@ export function Composer({
           disabled={disabled || value.trim().length === 0}
           aria-label={t("send")}
           title={t("send")}
-          className="state-layer pressable flex h-10 w-10 flex-none cursor-pointer items-center justify-center rounded-[8px] bg-primary text-on-primary transition-opacity disabled:cursor-default disabled:opacity-35 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-on-surface"
+          className="state-layer pressable flex h-10 w-10 flex-none cursor-pointer items-center justify-center rounded-full bg-primary text-on-primary transition-opacity disabled:cursor-default disabled:opacity-35 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-on-surface"
         >
           <SendIcon className="h-[18px] w-[18px]" />
         </button>

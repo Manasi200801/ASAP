@@ -7,6 +7,8 @@
   "railHead": "SAP · live calls",
   "you": "You",
   "agent": "Agent",
+  "agentTyping": "Agent is typing…",
+  "close": "Close",
   "dropHint": "Drop invoices here (PDF or image), or ask a question.",
   "loadBatch": "Load sample batch",
   "seed1": "Process the FPL batch",

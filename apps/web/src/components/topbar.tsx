@@ -21,6 +21,8 @@ export function Topbar({
   search,
   onSearch,
   blocked,
+  unseenCount,
+  onOpenNotifications,
   onSelectInvoice,
   theme,
   onToggleTheme,
@@ -31,6 +33,10 @@ export function Topbar({
   search: string;
   onSearch: (value: string) => void;
   blocked: InvoiceRow[];
+  /** Blocked invoices not yet acknowledged by opening this dropdown - what the badge counts. */
+  unseenCount: number;
+  /** Called the moment the dropdown opens, so the caller can mark today's blocked invoices seen. */
+  onOpenNotifications: () => void;
   onSelectInvoice: (invoiceId: string) => void;
   theme: "dark" | "light";
   onToggleTheme: () => void;
@@ -57,16 +63,24 @@ export function Topbar({
         <div className="relative">
           <button
             type="button"
-            onClick={() => setOpen((o) => !o)}
+            onClick={() => {
+              setOpen((o) => {
+                // Opening is what acknowledges the current set of blocked
+                // invoices - the badge counts what has not been looked at
+                // yet, not "how many are blocked right now" forever.
+                if (!o) onOpenNotifications();
+                return !o;
+              });
+            }}
             aria-expanded={open}
             aria-label={t("blockedCount", { count: blocked.length })}
             title={t("blockedCount", { count: blocked.length })}
             className="state-layer pressable relative flex h-10 w-10 flex-none cursor-pointer items-center justify-center rounded-full border border-outline-variant bg-surface-container text-on-surface-variant transition-colors hover:border-outline hover:text-on-surface focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
           >
             <BellIcon className="h-[18px] w-[18px]" />
-            {blocked.length > 0 ? (
+            {unseenCount > 0 ? (
               <span className="-top-1 -right-1 absolute flex h-4 min-w-4 items-center justify-center rounded-full bg-error px-1 font-semibold text-[10px] text-on-error tabular-nums">
-                {blocked.length}
+                {unseenCount}
               </span>
             ) : null}
           </button>
