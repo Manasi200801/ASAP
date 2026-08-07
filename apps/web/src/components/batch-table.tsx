@@ -68,9 +68,17 @@ export function BatchTable({
   }, [invoices]);
 
   const allSettled = invoices.length > 0 && invoices.every((i) => i.status !== "pending");
-  const totalMs = allSettled
-    ? invoices.reduce((sum, i) => sum + ((i.finishedAt ?? 0) - (i.startedAt ?? 0)), 0)
-    : null;
+  // Wall clock, not the sum of the rows. The invoices are checked concurrently,
+  // so their elapsed times overlap and adding them up describes nothing that
+  // happened: six nine-second rows would total fifty-four seconds for a batch
+  // that took nine. First start to last finish is the number a person watching
+  // the screen actually experienced, and it reconciles with the column.
+  const starts = invoices.map((i) => i.startedAt).filter((t): t is number => t !== undefined);
+  const finishes = invoices.map((i) => i.finishedAt).filter((t): t is number => t !== undefined);
+  const totalMs =
+    allSettled && starts.length > 0 && finishes.length > 0
+      ? Math.max(...finishes) - Math.min(...starts)
+      : null;
 
   return (
     <div className="enter elevated overflow-x-auto rounded-[12px] border border-outline-variant bg-surface">
@@ -201,11 +209,18 @@ export function BatchTable({
                         <span>{invoice.suggestion.text}</span>
                       </p>
                     ) : null}
-                    {/* Each of these asks the agent a real question. They were
-                        decoration once, and a button that does nothing is worse
-                        than no button - it teaches people the screen is a mockup. */}
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      {invoice.suggestion ? (
+                    {/* Actions only where one exists.
+
+                        "Ask why" sat directly beneath the answer to that
+                        question, which teaches people the screen is not
+                        thinking. And a note to the buyer is only useful when a
+                        buyer can act: a wrong purchase order, a price or a
+                        quantity they own. On a duplicate the document is already
+                        in SAP and the decision belongs to accounts payable, so
+                        offering to email procurement is noise. The label says
+                        what the button does - it drafts, it does not send. */}
+                    {invoice.suggestion ? (
+                      <div className="mt-4 flex flex-wrap gap-2">
                         <Action
                           label={t("actUse", { po: invoice.suggestion.value })}
                           disabled={asking}
@@ -218,18 +233,15 @@ export function BatchTable({
                             )
                           }
                         />
-                      ) : null}
-                      <Action
-                        label={t("actSend")}
-                        disabled={asking}
-                        onClick={() => onAsk(t("askSend", { invoice: invoice.supplierInvoiceId }))}
-                      />
-                      <Action
-                        label={t("actAsk")}
-                        disabled={asking}
-                        onClick={() => onAsk(t("askWhy", { invoice: invoice.supplierInvoiceId }))}
-                      />
-                    </div>
+                        <Action
+                          label={t("actSend")}
+                          disabled={asking}
+                          onClick={() =>
+                            onAsk(t("askSend", { invoice: invoice.supplierInvoiceId }))
+                          }
+                        />
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
 

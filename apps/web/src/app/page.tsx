@@ -350,7 +350,11 @@ export default function Page() {
 
           {(run.state === "awaiting-approval" && remainingReadyIds.length > 0) ||
           (run.state === "posting" && run.parkingIds.length > 1) ? (
-            <div className="flex flex-none justify-center border-outline-variant border-t bg-surface-container-low px-8 py-4">
+            // A bar across the pane, not a card centred over it: the gate has to
+            // be impossible to scroll past without being something the batch
+            // scrolls underneath. The primary-tinted top edge is what marks it
+            // as the one place the run stops.
+            <div className="flex flex-none border-primary/30 border-t bg-surface-container-low px-8 py-3">
               <ApprovalCard
                 // While a batch approval is in flight, show how many are
                 // actually being parked right now, not the original count -

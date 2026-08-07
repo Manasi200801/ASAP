@@ -1,5 +1,6 @@
 "use client";
 
+import type { Translate } from "@/lib/i18n";
 import { useRef, useState } from "react";
 
 type Phase = "idle" | "starting" | "syncing" | "synced" | "failed" | "timeout";
@@ -10,9 +11,11 @@ const MAX_POLLS = 120; // ~6 minutes, matching apps/agent/scripts/make_kb.py
 export function KbSyncBar({
   unsyncedCount,
   onSynced,
+  t,
 }: {
   unsyncedCount: number;
   onSynced: () => void;
+  t: Translate;
 }) {
   const [phase, setPhase] = useState<Phase>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -25,12 +28,12 @@ export function KbSyncBar({
     try {
       const response = await fetch("/api/sops/sync", { method: "POST" });
       const body = await response.json();
-      if (!response.ok) throw new Error(body.message ?? "Could not start the sync.");
+      if (!response.ok) throw new Error(body.message ?? t("sopsSyncStartFailed"));
       setPhase("syncing");
       poll(body.jobId, body.dataSourceId);
     } catch (err) {
       setPhase("failed");
-      setError(err instanceof Error ? err.message : "Could not start the sync.");
+      setError(err instanceof Error ? err.message : t("sopsSyncStartFailed"));
     }
   }
 
@@ -46,7 +49,7 @@ export function KbSyncBar({
     const body = await response.json();
     if (!response.ok) {
       setPhase("failed");
-      setError(body.message ?? "Sync failed.");
+      setError(body.message ?? t("sopsSyncFailed"));
       return;
     }
     if (body.status === "COMPLETE") {
@@ -56,7 +59,7 @@ export function KbSyncBar({
     }
     if (body.status === "FAILED") {
       setPhase("failed");
-      setError("The ingestion job failed.");
+      setError(t("sopsSyncJobFailed"));
       return;
     }
     setTimeout(() => poll(jobId, dataSourceId), POLL_INTERVAL_MS);
@@ -65,27 +68,27 @@ export function KbSyncBar({
   const busy = phase === "starting" || phase === "syncing";
 
   return (
-    <div className="flex items-center gap-3 rounded-md border border-line bg-surface-2 px-3.5 py-2.5">
+    <div className="flex items-center gap-3 rounded-md border border-outline-variant bg-surface-container-low px-3.5 py-2.5">
       <button
         type="button"
         onClick={sync}
         disabled={busy}
-        className="pressable cursor-pointer rounded-full border border-brass-deep bg-brass/[0.08] px-3 py-1 font-medium text-[12px] text-brass disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brass"
+        className="pressable cursor-pointer rounded-full border border-primary/40 bg-primary/[0.08] px-3 py-1 font-medium text-[12px] text-primary disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
       >
-        {busy ? "Syncing…" : "Sync knowledge base"}
+        {busy ? t("sopsSyncing") : t("sopsSync")}
       </button>
       {unsyncedCount > 0 && !busy ? (
-        <span className="font-data text-[11px] text-ink-faint">
-          {unsyncedCount} unsynced change{unsyncedCount === 1 ? "" : "s"}
+        <span className="text-[11px] text-on-surface-faint">
+          {unsyncedCount === 1 ? t("sopsUnsyncedOne") : t("sopsUnsynced", { count: unsyncedCount })}
         </span>
       ) : null}
-      {phase === "synced" ? <span className="text-[12px] text-ok">Synced</span> : null}
+      {phase === "synced" ? (
+        <span className="text-[12px] text-success">{t("sopsSynced")}</span>
+      ) : null}
       {phase === "timeout" ? (
-        <span className="text-[12px] text-ink-dim">Still running — check back</span>
+        <span className="text-[12px] text-on-surface-variant">{t("sopsSyncTimeout")}</span>
       ) : null}
-      {phase === "failed" && error ? (
-        <span className="text-[12px] text-blocked">{error}</span>
-      ) : null}
+      {phase === "failed" && error ? <span className="text-[12px] text-error">{error}</span> : null}
     </div>
   );
 }

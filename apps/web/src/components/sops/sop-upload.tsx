@@ -1,13 +1,16 @@
 "use client";
 
+import type { Translate } from "@/lib/i18n";
 import { useRef, useState } from "react";
 
 export function SopUpload({
   existingKeys,
   onUpload,
+  t,
 }: {
   existingKeys: string[];
   onUpload: (key: string, content: string) => Promise<void>;
+  t: Translate;
 }) {
   const input = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
@@ -19,7 +22,7 @@ export function SopUpload({
     const file = files[0];
     if (!file) return;
     if (!file.name.endsWith(".md")) {
-      setError("Only .md files are supported.");
+      setError(t("sopsOnlyMd"));
       return;
     }
     const content = await file.text();
@@ -59,30 +62,32 @@ export function SopUpload({
         }}
         onClick={() => input.current?.click()}
         className={`cursor-pointer rounded-md border border-dashed px-3.5 py-3 text-left text-[13px] transition-colors ${
-          dragging ? "border-brass bg-brass/[0.06] text-ink" : "border-line-strong text-ink-dim"
+          dragging
+            ? "border-primary bg-primary/[0.06] text-on-surface"
+            : "border-outline text-on-surface-variant"
         }`}
       >
-        Upload a new SOP (.md) — click or drop a file
+        {t("sopsUploadHint")}
       </div>
-      {error ? <p className="text-[12px] text-blocked">{error}</p> : null}
+      {error ? <p className="text-[12px] text-error">{error}</p> : null}
       {pending ? (
-        <div className="flex items-center gap-2.5 rounded-md border border-blocked-deep bg-blocked/[0.06] px-3 py-2 text-[12.5px]">
-          <span className="text-ink-dim">
-            This will overwrite <b className="text-ink">{pending.key}</b>.
+        <div className="flex items-center gap-2.5 rounded-md border border-error/40 bg-error/[0.06] px-3 py-2 text-[12.5px]">
+          <span className="text-on-surface-variant">
+            {t("sopsOverwriteWarn", { key: pending.key })}
           </span>
           <button
             type="button"
             onClick={confirmOverwrite}
-            className="pressable cursor-pointer rounded-full border border-blocked px-2.5 py-1 text-[11.5px] text-blocked"
+            className="pressable cursor-pointer rounded-full border border-error px-2.5 py-1 text-[11.5px] text-error"
           >
-            Overwrite
+            {t("sopsOverwrite")}
           </button>
           <button
             type="button"
             onClick={() => setPending(null)}
-            className="cursor-pointer text-[11.5px] text-ink-faint"
+            className="cursor-pointer text-[11.5px] text-on-surface-faint"
           >
-            Cancel
+            {t("sopsCancel")}
           </button>
         </div>
       ) : null}
