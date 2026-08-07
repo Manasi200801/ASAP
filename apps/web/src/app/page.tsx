@@ -6,6 +6,7 @@ import { CallRail } from "@/components/call-rail";
 import { Composer } from "@/components/composer";
 import { useLocale } from "@/lib/i18n";
 import { useRun } from "@/lib/use-run";
+import Link from "next/link";
 import { useState } from "react";
 
 export default function Page() {
@@ -78,6 +79,13 @@ export default function Page() {
             </span>
             <span className="text-ink-faint">{t("period")}</span>
           </div>
+
+          <Link
+            href="/sops"
+            className="font-data text-[11px] text-ink-dim tracking-[0.06em] hover:text-ink"
+          >
+            SOPs
+          </Link>
 
           <div className="flex gap-1.5">
             {(["en", "de"] as const).map((code) => (
