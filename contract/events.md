@@ -16,7 +16,12 @@ Request: `{ "runId": string, "files": [{ "name": string, "size": number }] }`
 Response: `{ "uploads": [{ "name": string, "key": string, "url": string }] }`
 
 `url` is a presigned S3 PUT valid for 15 minutes. The browser uploads each file directly to
-`s3://516359819848-invoice/runs/<runId>/<name>`. Files never pass through the Next.js server.
+`s3://516359819848-uploaded-invoice/runs/<runId>/<name>`. Files never pass through the Next.js
+server.
+
+`key` comes back fully qualified as `s3://<bucket>/<key>`, because the agent reads from two
+buckets: uploads, and the workshop's own PDFs for the demo batch. A bare key in `/api/chat`'s
+`keys` still resolves against the upload bucket.
 
 **Bucket CORS is required** and is not configured by the workshop stack. Without it the browser
 PUT is blocked. Minimum rule:
@@ -38,14 +43,22 @@ Response: an SSE stream of the events below. Read-only — this endpoint never w
 
 ### `POST /api/approve`
 
-Request: `{ "runId": string }`
+Request: `{ "runId": string, "overrideIds"?: string[], "rejectIds"?: string[] }`
 
-Response: an SSE stream of `tool-call` and `posting` events.
+Response: an SSE stream of `tool-call`, `posting` and `filed` events.
 
 Approval is a **separate request**, not a message in the chat stream. This makes the
 single-approval gate structural: nothing can be written to SAP without a distinct second call
 from the client. The state machine rejects `/api/approve` unless the run is in
 `awaiting-approval`.
+
+`overrideIds` are invoices the checks blocked and a person approved anyway; they are parked
+exactly like clean ones, and SAP's answer is reported verbatim rather than assumed. `rejectIds`
+are invoices a person turned down; they never reach SAP. Both are ignored for any id that is not
+actually blocked.
+
+Marking a row in the table sends nothing. Every decision travels on this one request, so the
+"single human approval step" stays literally true — one gate, one write path, one press.
 
 ---
 
@@ -226,6 +239,40 @@ On `/api/approve`, one or two per approved invoice.
 `message` — on `error` only, plain language
 
 Emit with a ~60ms floor. The sequential arrival is the payoff moment of the demo.
+
+### `filed`
+
+Where the PDF ended up, after the posting loop. One per invoice that was settled — nothing is
+emitted for an invoice that stays put.
+
+```json
+{
+  "type": "filed",
+  "invoiceId": "fpl-invoice-01",
+  "status": "moved",
+  "bucket": "516359819848-processed-invoice",
+  "key": "runs/r_a1b2c3/fpl-invoice-01.pdf"
+}
+```
+
+`status` — `moved` | `kept` | `error`
+`message` — on `error` only, plain language
+
+Routing, in full:
+
+| Outcome | Destination |
+|---|---|
+| Parked in SAP, whether clean or overridden | `-processed-invoice` |
+| Explicitly rejected by a person | `-blocked-invoice` |
+| Blocked and undecided | stays in `-uploaded-invoice`, no event |
+| Overridden, but SAP refused the park | stays in `-uploaded-invoice`, no event |
+
+`kept` means the archive has a copy but the original was left in place: either the source was
+`-invoice`, which is never emptied, or the delete failed after a successful copy. A duplicate is
+recoverable; a missing copy is not.
+
+A filing failure is reported but never fails the run — the invoice is already parked in SAP, and a
+misfiled PDF must not make a successful posting look broken.
 
 ### `text`
 

@@ -11,11 +11,15 @@ import { useState } from "react";
 
 export default function Page() {
   const { locale, setLocale, t } = useLocale();
-  const { run, start, ask, approve, reset } = useRun();
+  const { run, start, ask, approve, decide, reset } = useRun();
   const [files, setFiles] = useState<string[]>([]);
   const [slow, setSlow] = useState(false);
 
-  const busy = run.state === "extracting" || run.state === "validating" || run.state === "posting";
+  const busy =
+    run.state === "uploading" ||
+    run.state === "extracting" ||
+    run.state === "validating" ||
+    run.state === "posting";
   const started = run.state !== "idle";
 
   // Counted from the rows as they settle, not from the closing `summary` event.
@@ -36,20 +40,17 @@ export default function Page() {
     document.documentElement.style.setProperty("--m", next ? "4" : "1");
   }
 
-  async function begin(message?: string, names: string[] = []) {
+  async function begin(message?: string, dropped: File[] = []) {
     reset();
-    setFiles(names);
-    await start(locale, message);
+    setFiles(dropped.map((f) => f.name));
+    await start(locale, message, dropped);
   }
 
   async function onFiles(dropped: File[]) {
     if (dropped.length === 0) return;
     // Acknowledge receipt before any work begins - the chips appear immediately,
-    // separately from extraction, so the upload never looks like it was ignored.
-    await begin(
-      undefined,
-      dropped.map((f) => f.name),
-    );
+    // separately from the upload, so the drop never looks like it was ignored.
+    await begin(undefined, dropped);
   }
 
   return (
@@ -147,11 +148,22 @@ export default function Page() {
                   );
                 })}
 
-                {run.invoices.length > 0 ? <BatchTable invoices={run.invoices} t={t} /> : null}
+                {run.invoices.length > 0 ? (
+                  <BatchTable
+                    invoices={run.invoices}
+                    // Decisions are only offered while the gate is open. After
+                    // Approve there is nothing left to decide, and a live-looking
+                    // button that no longer does anything is worse than none.
+                    onDecide={run.state === "awaiting-approval" ? decide : undefined}
+                    t={t}
+                  />
+                ) : null}
 
                 {run.state === "awaiting-approval" ? (
                   <ApprovalCard
                     readyCount={run.readyIds.length}
+                    overrideCount={run.invoices.filter((i) => i.decision === "override").length}
+                    rejectCount={run.invoices.filter((i) => i.decision === "reject").length}
                     blockedCount={run.blockedIds.length}
                     onApprove={approve}
                     t={t}

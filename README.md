@@ -24,6 +24,8 @@ Sixteen validation rules run per invoice. Thirteen are deterministic comparisons
 
 Nothing reaches SAP without a human. The run stops at `awaiting-approval` and only a separate `/approve` request writes. Approved invoices are parked as reversible drafts (`SupplierInvoiceStatus: "A"`), never posted for payment.
 
+A block is a recommendation, not a verdict. The clerk can approve a blocked invoice anyway or reject it outright; both marks travel on the same single Approve press, so the one-gate rule holds. Once the batch settles, each PDF is filed by outcome — parked invoices to `-processed-invoice`, rejected ones to `-blocked-invoice` — and anything nobody ruled on stays in `-uploaded-invoice`, which is therefore an accurate list of what still needs attention.
+
 The full contract between the two halves — every event, every rule, every environment fact — is `contract/events.md`.
 
 ## Key Features
@@ -60,8 +62,8 @@ Two independent apps talking over one documented event contract.
 browser
   |
   |  1. POST /api/upload -> presigned PUT URLs
-  |  2. PUT each PDF directly to S3            s3://516359819848-invoice/runs/<runId>/
-  |  3. POST /api/chat, POST /api/approve
+  |  2. PUT each PDF directly to S3    s3://516359819848-uploaded-invoice/runs/<runId>/
+  |  3. POST /api/chat, POST /api/approve {overrideIds, rejectIds}
   v
 apps/web  (Next.js 15 route handlers, SSE passthrough)
   |
@@ -78,6 +80,7 @@ apps/agent  (FastAPI)
   +-- judge.py    3 agent-decided rules: 4 supplier, 7 material, 9 price tolerance
   |                 rule 9 retrieves from the SOP knowledge base and cites it
   +-- sap.py      MCP server on AgentCore Runtime -> S/4HANA OData
+  +-- storage.py  files each settled PDF to its archive bucket
 ```
 
 No model output can cause a state transition — the Python state machine owns them all. `/approve` is a distinct request rather than a chat message, which is what makes the single approval gate structural rather than a prompt instruction.
@@ -199,7 +202,8 @@ Two files, both gitignored, both copied from the `.env.example` next to them. **
 | Variable | Default | What it is |
 | --- | --- | --- |
 | `SAP_BACKEND` | `fake` | `fake` or `mcp`. `mcp` needs Lab 05 deployed and `AGENT_RUNTIME_ARN` set |
-| `EXTRACT_BACKEND` | `sample` | `sample` or `bedrock`. `bedrock` needs `INVOICE_BUCKET` and Bedrock access |
+| `EXTRACT_BACKEND` | `sample` | `sample` or `bedrock`. `bedrock` reads real PDFs from S3 and needs Bedrock access |
+| `STORAGE_BACKEND` | `fake` | `fake` or `s3`. `fake` records moves without calling S3 |
 | `JUDGE_BACKEND` | `fake` | `fake` or `bedrock`. `bedrock` needs Bedrock access, optionally `SOP_KNOWLEDGE_BASE_ID` |
 | `AWS_PROFILE` | — | `workshop`. Credentials resolve through the standard chain |
 | `AWS_REGION` | `us-east-1` | |
@@ -207,7 +211,10 @@ Two files, both gitignored, both copied from the `.env.example` next to them. **
 | `SAP_BASE_URL` | — | From the Workshop Studio `WebGuiURL`, with the OData base path swapped in |
 | `AGENT_RUNTIME_ARN` | — | Printed by `deploy_mcp_server.py`. Set explicitly because the workshop participant role cannot read it back from SSM |
 | `BEDROCK_MODEL_ID` | — | `us.anthropic.claude-sonnet-4-6` |
-| `INVOICE_BUCKET` | `516359819848-invoice` | From Workshop Studio, `InvoiceBucketName` |
+| `INVOICE_BUCKET` | `516359819848-invoice` | From Workshop Studio, `InvoiceBucketName`. The six workshop PDFs `Load batch` reads. Never emptied |
+| `UPLOAD_BUCKET` | `516359819848-uploaded-invoice` | Where the browser PUTs dropped PDFs, and the only bucket ever deleted from |
+| `PROCESSED_BUCKET` | `516359819848-processed-invoice` | Parked in SAP |
+| `BLOCKED_BUCKET` | `516359819848-blocked-invoice` | Turned down by a person |
 | `SOP_KNOWLEDGE_BASE_ID` | — | Without it rule 9 falls back to a flat 5% tolerance and says so |
 | `ALLOWED_ORIGINS` | `http://localhost:3000` | CORS allowlist for the orchestrator |
 
@@ -221,11 +228,11 @@ The Cognito client id and secret are deliberately absent — they are read at ru
 | `AGENT_TOKEN` | Only if the orchestrator sits behind an authenticating gateway. Not needed locally |
 | `MOCK` | `1` forces the mock even when `AGENT_ENDPOINT` is set |
 | `AWS_REGION` | Used by `/api/upload` to presign |
-| `INVOICE_BUCKET` | Used by `/api/upload` to presign |
+| `UPLOAD_BUCKET` | Bucket `/api/upload` presigns into. Must match the agent's `UPLOAD_BUCKET` |
 | `SOP_BUCKET` | Bucket the `/sops` page manages — list, read, write SOP files |
 | `SOP_KNOWLEDGE_BASE_ID` | Knowledge base the `/sops` page's "Sync knowledge base" button re-indexes |
 
-The invoice bucket needs a CORS rule allowing `PUT` from your origin or the browser blocks the upload — the workshop stack does not create one. The minimum rule is in `contract/events.md`. It is already configured for `http://localhost:3000`, `http://127.0.0.1:3000` and `https://*.vercel.app`.
+The upload bucket needs a CORS rule allowing `PUT` from your origin or the browser blocks the upload — the workshop stack does not create one. The minimum rule is in `contract/events.md`. It is already configured on `516359819848-uploaded-invoice` for `http://localhost:3000`, `http://127.0.0.1:3000` and `https://*.vercel.app`. The processed and blocked buckets need none; no browser talks to them.
 
 ## Checks
 

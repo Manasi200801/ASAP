@@ -94,6 +94,20 @@ const Posting = z.object({
   message: z.string().optional(),
 });
 
+/**
+ * Where the PDF ended up once the batch was settled. `kept` means the archive
+ * has a copy but the original was left in place - the workshop bucket is never
+ * emptied, and a delete that fails leaves a duplicate rather than a hole.
+ */
+const FiledEvent = z.object({
+  type: z.literal("filed"),
+  invoiceId: z.string(),
+  status: z.enum(["moved", "kept", "error"]),
+  bucket: z.string().optional(),
+  key: z.string().optional(),
+  message: z.string().optional(),
+});
+
 const Text = z.object({ type: z.literal("text"), delta: z.string() });
 
 const ErrorEvent = z.object({
@@ -111,6 +125,7 @@ export const RunEvent = z.discriminatedUnion("type", [
   Summary,
   Approval,
   Posting,
+  FiledEvent,
   Text,
   ErrorEvent,
 ]);
@@ -155,6 +170,12 @@ export type InvoiceRow = InvoiceEvent & {
   sapDocument?: string;
   fiscalYear?: string;
   reference?: string;
+  // What the clerk decided about a blocked invoice. A mark, not an action -
+  // nothing happens until Approve is pressed, which is what keeps the gate
+  // single.
+  decision?: "override" | "reject";
+  // Where the PDF was filed once the batch settled.
+  filed?: { status: "moved" | "kept" | "error"; bucket?: string };
 };
 
 /** Derive an invoice's overall status from its rule results. */

@@ -237,7 +237,15 @@ export async function* mockRun(runId: string): AsyncGenerator<RunEvent> {
   yield { type: "approval", runId, readyIds, blockedIds };
 }
 
-export async function* mockPost(runId: string, readyIds: string[]): AsyncGenerator<RunEvent> {
+const UPLOAD_BUCKET = "516359819848-uploaded-invoice";
+const PROCESSED_BUCKET = "516359819848-processed-invoice";
+const BLOCKED_BUCKET = "516359819848-blocked-invoice";
+
+export async function* mockPost(
+  runId: string,
+  postIds: string[],
+  rejectIds: string[] = [],
+): AsyncGenerator<RunEvent> {
   yield {
     type: "text",
     delta: `Parking approved invoices as status A, reference ${ACCOUNT}-11 onward.`,
@@ -247,7 +255,7 @@ export async function* mockPost(runId: string, readyIds: string[]): AsyncGenerat
   let doc = 5100001500;
   let seq = 11;
 
-  for (const id of readyIds) {
+  for (const id of postIds) {
     const reference = `${ACCOUNT}-${seq}`;
     yield {
       type: "tool-call",
@@ -270,9 +278,23 @@ export async function* mockPost(runId: string, readyIds: string[]): AsyncGenerat
     await sleep(FLOOR.posting);
   }
 
+  // Filing, same rules as the agent: parked goes to the processed archive,
+  // an explicit rejection to the blocked one, and anything undecided stays in
+  // the upload bucket and is therefore not mentioned at all.
+  for (const id of postIds) {
+    yield { type: "filed", invoiceId: id, status: "moved", bucket: PROCESSED_BUCKET };
+    await sleep(FLOOR.posting);
+  }
+  for (const id of rejectIds) {
+    yield { type: "filed", invoiceId: id, status: "moved", bucket: BLOCKED_BUCKET };
+    await sleep(FLOOR.posting);
+  }
+
+  const open = 6 - postIds.length - rejectIds.length;
+  const tail =
+    open > 0 ? `${open} still open in ${UPLOAD_BUCKET}, waiting on the buyer.` : "Nothing left open.";
   yield {
     type: "text",
-    delta:
-      "Five parked documents in SAP, fiscal year 2025. FPL-9999 is still open and waiting on the buyer.",
+    delta: `${postIds.length} parked documents in SAP, fiscal year 2025. ${tail}`,
   };
 }

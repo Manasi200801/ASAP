@@ -29,6 +29,12 @@ class Extracted:
     currency: str
     company_code: str
 
+    # Where the PDF was read from, as `s3://bucket/key`. Empty in sample mode.
+    # Filing the invoice after posting has to delete the exact object it read;
+    # reconstructing that from `file` guesses at the bucket, and a wrong guess
+    # deletes someone else's object.
+    source: str = ""
+
     # Set by the orchestrator, not by extraction.
     reference: str = ""
     posting_date: str = ""

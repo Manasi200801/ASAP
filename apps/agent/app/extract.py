@@ -1,18 +1,25 @@
 """Reading invoices.
 
-`extract_batch` is the seam. Today it returns the Lab 06 sample batch so the
-whole pipeline runs without Bedrock or S3. The real version reads each PDF from
-S3 and asks Bedrock for the fields, with a confidence per field so anything
-uncertain is marked in the interface rather than presented as fact.
+`extract_batch` is the seam. With EXTRACT_BACKEND=sample it returns the Lab 06
+batch transcribed below, so the whole pipeline runs without Bedrock or S3. With
+`bedrock` it reads each PDF out of S3 and asks Bedrock for the fields, with a
+confidence per field so anything uncertain is marked in the interface rather
+than presented as fact.
 
-Swap with EXTRACT_BACKEND=bedrock.
+Keys arrive as `s3://bucket/key`, because two buckets are readable: clerk
+uploads land in UPLOAD_BUCKET, and the workshop's own PDFs live in
+INVOICE_BUCKET. A bare key means the upload bucket.
 """
 
 from __future__ import annotations
 
+import logging
 import os
 
+from .storage import split_uri, upload_bucket
 from .types import Extracted
+
+log = logging.getLogger("app.extract")
 
 # The six invoices the workshop pre-provisions, transcribed from the PDFs.
 _SAMPLE = [
@@ -81,10 +88,21 @@ Return exactly this shape:
 }"""
 
 
-def _s3_bytes(key: str) -> bytes:
+def resolve(key: str) -> tuple[str, str]:
+    """`s3://bucket/key` -> (bucket, key). A bare key means the upload bucket.
+
+    Two buckets are readable now - clerk uploads and the workshop's own PDFs -
+    so a key alone no longer says where it lives. Bare keys keep resolving
+    against the upload bucket, which is where everything the browser sends goes.
+    """
+    if key.startswith("s3://"):
+        return split_uri(key)
+    return upload_bucket(), key
+
+
+def _s3_bytes(bucket: str, key: str) -> bytes:
     import boto3
 
-    bucket = os.getenv("INVOICE_BUCKET", "516359819848-invoice")
     body = boto3.client("s3", region_name=os.getenv("AWS_REGION", "us-east-1")).get_object(
         Bucket=bucket, Key=key
     )
@@ -94,10 +112,12 @@ def _s3_bytes(key: str) -> bytes:
 def _one(key: str) -> Extracted:
     from .bedrock import ask_json
 
-    name = key.rsplit("/", 1)[-1]
-    fields = ask_json(SYSTEM, PROMPT, document=_s3_bytes(key), name=name)
+    bucket, path = resolve(key)
+    name = path.rsplit("/", 1)[-1]
+    fields = ask_json(SYSTEM, PROMPT, document=_s3_bytes(bucket, path), name=name)
 
     return Extracted(
+        source=f"s3://{bucket}/{path}",
         invoice_id=fields.get("supplier_invoice_id") or name,
         file=name,
         supplier_invoice_id=fields.get("supplier_invoice_id", ""),
@@ -117,12 +137,35 @@ def _one(key: str) -> Extracted:
     )
 
 
+def workshop_keys() -> list[str]:
+    """The six PDFs the workshop pre-provisions, addressed in their own bucket.
+
+    This is what "Load batch" runs. It reads the real files through Bedrock
+    rather than returning the transcribed constants, so the demo path exercises
+    the same code as a clerk's upload. The mover refuses to delete from this
+    bucket, so replaying the batch never consumes it.
+    """
+    bucket = os.getenv("INVOICE_BUCKET", "516359819848-invoice")
+    return [f"s3://{bucket}/fpl-invoice-0{n}.pdf" for n in range(1, 7)]
+
+
 async def extract_batch(keys: list[str]) -> list[Extracted]:
-    if os.getenv("EXTRACT_BACKEND", "sample") != "bedrock" or not keys:
+    """Read a batch. In bedrock mode nothing here is transcribed.
+
+    An empty batch used to fall back to `sample_batch()` even with the bedrock
+    backend selected, so a clerk could upload real PDFs, watch a convincing run,
+    and be looking at Lab 06 constants. Now an empty batch means the workshop
+    PDFs, read for real; only EXTRACT_BACKEND=sample returns transcriptions.
+    """
+    if os.getenv("EXTRACT_BACKEND", "sample") != "bedrock":
         return sample_batch()
 
     import asyncio
 
+    batch = keys or workshop_keys()
+    if not keys:
+        log.info("no keys supplied, reading the %d workshop invoices", len(batch))
+
     # Read the batch concurrently; the orchestrator paces the emission afterwards,
     # so extraction speed does not affect how the cascade looks.
-    return list(await asyncio.gather(*(asyncio.to_thread(_one, key) for key in keys)))
+    return list(await asyncio.gather(*(asyncio.to_thread(_one, key) for key in batch)))

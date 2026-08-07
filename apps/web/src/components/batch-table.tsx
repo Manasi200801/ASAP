@@ -21,7 +21,16 @@ const DOT_TONE: Record<InvoiceRow["status"], string> = {
   parked: "bg-brass",
 };
 
-export function BatchTable({ invoices, t }: { invoices: InvoiceRow[]; t: Translate }) {
+export function BatchTable({
+  invoices,
+  onDecide,
+  t,
+}: {
+  invoices: InvoiceRow[];
+  /** Absent once the gate has closed - there is nothing left to decide. */
+  onDecide?: (invoiceId: string, decision: "override" | "reject") => void;
+  t: Translate;
+}) {
   const [open, setOpen] = useState<Record<string, boolean>>({});
 
   return (
@@ -91,6 +100,16 @@ export function BatchTable({ invoices, t }: { invoices: InvoiceRow[]; t: Transla
               <div>
                 <RuleChips rules={invoice.rules} t={t} />
 
+                {invoice.filed ? (
+                  <p className="mx-3 mb-3 font-data text-[11px] text-ink-faint">
+                    {invoice.filed.status === "error"
+                      ? t("filedError")
+                      : t(invoice.filed.status === "moved" ? "filedMoved" : "filedKept", {
+                          bucket: invoice.filed.bucket ?? "",
+                        })}
+                  </p>
+                ) : null}
+
                 {invoice.headline ? (
                   <div className="mx-3 mb-3.5 border-blocked border-l-2 pl-3">
                     <p className="max-w-[62ch]">{invoice.headline}</p>
@@ -101,12 +120,37 @@ export function BatchTable({ invoices, t }: { invoices: InvoiceRow[]; t: Transla
                       <p className="mt-1 max-w-[62ch] text-agent">◆ {invoice.suggestion.text}</p>
                     ) : null}
                     <div className="mt-3 flex flex-wrap gap-1.5">
+                      {onDecide ? (
+                        <>
+                          {/* Neither of these posts or files anything on its own.
+                              They mark the row, and the single Approve press
+                              below carries every mark to the agent at once. */}
+                          <Action
+                            label={t("actOverride")}
+                            pressed={invoice.decision === "override"}
+                            tone="override"
+                            onClick={() => onDecide(invoice.invoiceId, "override")}
+                          />
+                          <Action
+                            label={t("actReject")}
+                            pressed={invoice.decision === "reject"}
+                            tone="reject"
+                            onClick={() => onDecide(invoice.invoiceId, "reject")}
+                          />
+                        </>
+                      ) : null}
                       {invoice.suggestion ? (
                         <Action label={t("actUse", { po: invoice.suggestion.value })} />
                       ) : null}
                       <Action label={t("actSend")} />
                       <Action label={t("actAsk")} />
                     </div>
+
+                    {invoice.decision ? (
+                      <p className="mt-2.5 max-w-[62ch] text-[12.5px] text-ink-dim">
+                        {t(invoice.decision === "override" ? "markedOverride" : "markedReject")}
+                      </p>
+                    ) : null}
                   </div>
                 ) : null}
               </div>
@@ -118,11 +162,32 @@ export function BatchTable({ invoices, t }: { invoices: InvoiceRow[]; t: Transla
   );
 }
 
-function Action({ label }: { label: string }) {
+const PRESSED_TONE = {
+  override: "border-ok bg-ok/[0.12] text-ok",
+  reject: "border-blocked bg-blocked/[0.12] text-blocked",
+} as const;
+
+function Action({
+  label,
+  pressed,
+  tone,
+  onClick,
+}: {
+  label: string;
+  pressed?: boolean;
+  tone?: keyof typeof PRESSED_TONE;
+  onClick?: () => void;
+}) {
   return (
     <button
       type="button"
-      className="pressable cursor-pointer rounded-full border border-line bg-surface-3 px-2.5 py-1 text-[12px] text-ink-dim transition-colors hover:border-ink-faint hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-brass"
+      onClick={onClick}
+      aria-pressed={onClick ? Boolean(pressed) : undefined}
+      className={`pressable cursor-pointer rounded-full border px-2.5 py-1 text-[12px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-brass ${
+        pressed && tone
+          ? PRESSED_TONE[tone]
+          : "border-line bg-surface-3 text-ink-dim hover:border-ink-faint hover:text-ink"
+      }`}
     >
       {label}
     </button>

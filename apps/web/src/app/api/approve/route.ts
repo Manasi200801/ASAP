@@ -16,6 +16,8 @@ export async function POST(request: Request) {
   const body = await request.json();
   const runId: string = body.runId;
   const readyIds: string[] = body.readyIds ?? [];
+  const overrideIds: string[] = body.overrideIds ?? [];
+  const rejectIds: string[] = body.rejectIds ?? [];
   const endpoint = process.env.AGENT_ENDPOINT;
 
   if (!runId) {
@@ -23,7 +25,8 @@ export async function POST(request: Request) {
   }
 
   if (!endpoint || process.env.MOCK === "1") {
-    return eventStream(mockPost(runId, readyIds));
+    // An override posts exactly like a clean invoice, so the mock parks both.
+    return eventStream(mockPost(runId, [...readyIds, ...overrideIds], rejectIds));
   }
 
   const upstream = await fetch(`${endpoint}/approve`, {
@@ -32,7 +35,10 @@ export async function POST(request: Request) {
       "Content-Type": "application/json",
       ...(process.env.AGENT_TOKEN ? { Authorization: `Bearer ${process.env.AGENT_TOKEN}` } : {}),
     },
-    body: JSON.stringify({ runId }),
+    // The decisions have to travel. The agent holds the run and knows its own
+    // ready set, but only the browser knows what the clerk marked - dropping
+    // these here silently posts the batch as if nobody had overridden anything.
+    body: JSON.stringify({ runId, overrideIds, rejectIds }),
   });
 
   if (!upstream.ok || !upstream.body) {

@@ -75,7 +75,7 @@ a lookup, not a routing library.
 | `AGENT_ENDPOINT` | unset replays the mock; set proxies to the orchestrator |
 | `MOCK=1` | forces the mock even when `AGENT_ENDPOINT` is set |
 | `AGENT_TOKEN` | sent as a bearer token, for a deployed orchestrator |
-| `INVOICE_BUCKET`, `AWS_REGION` | used by `/api/upload` to presign |
+| `UPLOAD_BUCKET`, `AWS_REGION` | used by `/api/upload` to presign. Must match the agent's `UPLOAD_BUCKET` |
 | `SOP_BUCKET` | Bucket the `/sops` page reads and writes |
 | `SOP_KNOWLEDGE_BASE_ID` | Knowledge base re-indexed by the "Sync knowledge base" action |
 

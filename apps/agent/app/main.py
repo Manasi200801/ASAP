@@ -38,6 +38,7 @@ from . import events as ev  # noqa: E402
 from .judge import build_judge  # noqa: E402
 from .orchestrator import RunStore, answer_run, post_run, validate_run  # noqa: E402
 from .sap import build_sap  # noqa: E402
+from .storage import build_mover  # noqa: E402
 
 ACCOUNT = os.getenv("AWS_ACCOUNT_ID", "516359819848")
 
@@ -55,8 +56,14 @@ log = logging.getLogger("app.http")
 store = RunStore()
 sap = build_sap()
 judge = build_judge()
+mover = build_mover()
 
-log.info("backends: sap=%s judge=%s", type(sap).__name__, type(judge).__name__)
+log.info(
+    "backends: sap=%s judge=%s mover=%s",
+    type(sap).__name__,
+    type(judge).__name__,
+    type(mover).__name__,
+)
 
 
 async def sse(events: AsyncIterator[ev.Event]) -> AsyncIterator[bytes]:
@@ -84,7 +91,17 @@ class ChatRequest(BaseModel):
 
 
 class ApproveRequest(BaseModel):
+    """One press, carrying every per-invoice decision the clerk made.
+
+    `overrideIds` are blocked invoices the clerk approved anyway; `rejectIds`
+    are ones they turned down. Marking a row in the table decides nothing on its
+    own - it is this single request that acts, which is what keeps the brief's
+    "single human approval step" literally true.
+    """
+
     runId: str
+    overrideIds: list[str] = []
+    rejectIds: list[str] = []
 
 
 @app.post("/chat")
@@ -122,7 +139,12 @@ async def approve(request: ApproveRequest) -> StreamingResponse:
     A separate request rather than a chat message, so the single approval gate is
     structural: the state machine rejects anything not awaiting approval.
     """
-    log.info("approve %s requested", request.runId)
+    log.info(
+        "approve %s requested: %d overrides, %d rejects",
+        request.runId,
+        len(request.overrideIds),
+        len(request.rejectIds),
+    )
     run = store.get(request.runId)
     if run is None:
         log.warning("approve %s rejected: no such run", request.runId)
@@ -132,7 +154,7 @@ async def approve(request: ApproveRequest) -> StreamingResponse:
 
         return stream(missing())
 
-    return stream(post_run(run, sap))
+    return stream(post_run(run, sap, mover, request.overrideIds, request.rejectIds))
 
 
 @app.get("/health")
@@ -141,4 +163,5 @@ async def health() -> dict[str, str]:
         "status": "ok",
         "sap": type(sap).__name__,
         "judge": type(judge).__name__,
+        "mover": type(mover).__name__,
     }

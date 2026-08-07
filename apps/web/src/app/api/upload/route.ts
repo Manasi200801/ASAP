@@ -3,7 +3,10 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 export const runtime = "nodejs";
 
-const BUCKET = process.env.INVOICE_BUCKET ?? "516359819848-invoice";
+// Uploads land in their own bucket, separate from the workshop's read-only
+// PDFs. An invoice leaves it for -processed-invoice or -blocked-invoice once a
+// human has decided, so what remains here is exactly what still needs attention.
+const BUCKET = process.env.UPLOAD_BUCKET ?? "516359819848-uploaded-invoice";
 const REGION = process.env.AWS_REGION ?? "us-east-1";
 
 /**
@@ -35,7 +38,10 @@ export async function POST(request: Request) {
         new PutObjectCommand({ Bucket: BUCKET, Key: key, ContentType: "application/pdf" }),
         { expiresIn: 900 },
       );
-      return { name: file.name, key, url };
+      // Fully qualified, because the agent reads from two buckets: uploads here,
+      // and the workshop's own PDFs for the demo batch. A bare key would be
+      // ambiguous the moment the second source exists.
+      return { name: file.name, key: `s3://${BUCKET}/${key}`, url };
     }),
   );
 

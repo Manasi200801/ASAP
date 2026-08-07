@@ -42,6 +42,7 @@ app/
   judge.py          the 3 that need judgment, plus explanations
   sap.py            SAP access behind one Protocol      ← the integration seam
   extract.py        invoice reading                     ← the other seam
+  storage.py        filing settled PDFs between buckets ← and the third
   events.py         Pydantic mirror of the contract
   types.py          shared value objects
 ```
@@ -54,17 +55,42 @@ the single human approval gate structural rather than a prompt instruction.
 
 ## Wiring the real backends
 
-Three environment variables, three independent swaps. Each one can land on its
+Four environment variables, four independent swaps. Each one can land on its
 own without touching the others or the frontend.
 
 | Variable | Default | Real value | What it needs |
 |---|---|---|---|
 | `SAP_BACKEND` | `fake` | `mcp` | `AGENT_RUNTIME_ARN` — the AgentCore runtime hosting the SAP MCP server |
-| `EXTRACT_BACKEND` | `sample` | `bedrock` | `INVOICE_BUCKET`, Bedrock access |
+| `EXTRACT_BACKEND` | `sample` | `bedrock` | Bedrock access, and PDFs in `UPLOAD_BUCKET` or `INVOICE_BUCKET` |
 | `JUDGE_BACKEND` | `fake` | `bedrock` | Bedrock access, optionally `SOP_KNOWLEDGE_BASE_ID` |
+| `STORAGE_BACKEND` | `fake` | `s3` | `UPLOAD_BUCKET`, `PROCESSED_BUCKET`, `BLOCKED_BUCKET` |
 
-All three are live. `apps/agent/.env.example` carries the real values and says
+All four are live. `apps/agent/.env.example` carries the real values and says
 where each came from; copy it to `.env.local` and set `AWS_PROFILE=workshop`.
+
+## Where an invoice lives
+
+An invoice moves buckets as it settles, so what is left in the upload bucket is
+exactly what still needs attention.
+
+```
+              ┌─ parked in SAP ────────────► 516359819848-processed-invoice
+              │
+uploaded ─────┼─ rejected by a person ─────► 516359819848-blocked-invoice
+              │
+              └─ nobody decided ───────────► stays put
+```
+
+A check failing is a recommendation, not a verdict: the clerk can approve a
+blocked invoice anyway, and it is then parked exactly like a clean one, with
+SAP's answer reported verbatim. An override SAP refuses stays in the upload
+bucket — nobody rejected it, and a retry may well work once the underlying
+problem is fixed.
+
+`516359819848-invoice` holds the six workshop PDFs that `Load batch` reads. It is
+copied from and **never** deleted from; the mover enforces that by bucket rather
+than by intent, because emptying it would destroy the demo fallback for the whole
+account on the first successful run.
 
 The Cognito client id and secret are deliberately not in any file — `McpSap`
 reads them from Secrets Manager at runtime.

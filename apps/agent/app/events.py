@@ -112,6 +112,22 @@ class Posting(Event):
     message: str | None = None
 
 
+class Filed(Event):
+    """Where the PDF ended up once the batch was settled.
+
+    `kept` means the archive has a copy but the original was left in place -
+    either the delete failed, or the source was the workshop bucket, which is
+    never emptied.
+    """
+
+    type: Literal["filed"] = "filed"
+    invoiceId: str
+    status: Literal["moved", "kept", "error"]
+    bucket: str | None = None
+    key: str | None = None
+    message: str | None = None
+
+
 class Text(Event):
     type: Literal["text"] = "text"
     delta: str

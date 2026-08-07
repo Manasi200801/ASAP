@@ -26,6 +26,7 @@ from .extract import extract_batch
 from .judge import Judge
 from .rules import AGENT_RULE_IDS, RULE_COUNT, RuleResult, run_deterministic
 from .sap import Sap, SapError
+from .storage import MoveError, Mover, blocked_bucket, processed_bucket
 from .types import Extracted
 
 log = logging.getLogger("app.run")
@@ -332,19 +333,49 @@ def park_payload(inv: Extracted, index: int, run: Run) -> dict:
     }
 
 
-async def post_run(run: Run, sap: Sap) -> AsyncIterator[ev.Event]:
-    """The only path that writes to SAP."""
+async def post_run(
+    run: Run,
+    sap: Sap,
+    mover: Mover,
+    overrides: list[str] | None = None,
+    rejects: list[str] | None = None,
+) -> AsyncIterator[ev.Event]:
+    """The only path that writes to SAP, and the only one that files a PDF.
+
+    `overrides` are invoices the checks blocked and a person approved anyway.
+    They are posted exactly like a clean invoice - an override is an approval,
+    not a reclassification, so SAP gets its say and whatever it answers is
+    reported verbatim. Overriding a purchase order that does not exist fails at
+    SAP, and that failure is the honest outcome.
+
+    `rejects` are invoices a person turned down. They never reach SAP; they are
+    filed to the blocked archive so the upload bucket only holds what is still
+    undecided.
+    """
 
     if run.state != "awaiting-approval":
         yield ev.Error(message="This run is not waiting for approval.", recoverable=False)
         return
 
+    overridden = [i for i in (overrides or []) if i in run.blocked]
+    rejected = [i for i in (rejects or []) if i in run.blocked]
+    posting = run.ready + overridden
+
     run.state = "posting"
+    log.info(
+        "%s posting %d invoices (%d overridden), rejecting %d",
+        run.run_id,
+        len(posting),
+        len(overridden),
+        len(rejected),
+    )
     yield ev.Text(delta=f"Parking approved invoices as status A, from reference {run.reference_for(0)}.")
     await asyncio.sleep(BEAT * 0.7)
 
+    parked_ids: list[str] = []
+
     for index, inv in enumerate(run.invoices):
-        if inv.invoice_id not in run.ready:
+        if inv.invoice_id not in posting:
             continue
 
         yield ev.ToolCall(
@@ -362,12 +393,14 @@ async def post_run(run: Run, sap: Sap) -> AsyncIterator[ev.Event]:
             yield ev.Posting(invoiceId=inv.invoice_id, status="error", message=str(error))
             continue
 
+        parked_ids.append(inv.invoice_id)
         log.info(
-            "%s %s parked as SAP document %s, reference %s",
+            "%s %s parked as SAP document %s, reference %s%s",
             run.run_id,
             inv.invoice_id,
             parked.sap_document,
             inv.reference,
+            " (overridden)" if inv.invoice_id in overridden else "",
         )
         yield ev.Posting(
             invoiceId=inv.invoice_id,
@@ -378,13 +411,56 @@ async def post_run(run: Run, sap: Sap) -> AsyncIterator[ev.Event]:
         )
         await asyncio.sleep(FLOOR_POSTING)
 
+    async for event in _file_batch(run, mover, parked_ids, rejected):
+        yield event
+
     run.state = "done"
     yield ev.Text(
         delta=(
-            f"{len(run.ready)} parked documents in SAP, fiscal year 2025. "
-            f"{len(run.blocked)} still open."
+            f"{len(parked_ids)} parked documents in SAP, fiscal year 2025. "
+            f"{len(run.blocked) - len(rejected) - len(overridden)} still open."
         )
     )
+
+
+async def _file_batch(
+    run: Run, mover: Mover, parked_ids: list[str], rejected: list[str]
+) -> AsyncIterator[ev.Event]:
+    """Send each settled PDF to its archive.
+
+    Only two outcomes move a file: SAP took it, or a person turned it down.
+    Everything else - blocked and undecided, or overridden and then refused by
+    SAP - stays in the upload bucket. Nobody reached a verdict on those, and a
+    refused park may well succeed on a retry once the underlying problem is
+    fixed, so filing them as blocked would record a decision that was never made.
+    """
+    for inv in run.invoices:
+        if inv.invoice_id in parked_ids:
+            bucket = processed_bucket()
+        elif inv.invoice_id in rejected:
+            bucket = blocked_bucket()
+        else:
+            continue
+
+        try:
+            filed = await mover.file_to(inv.source, bucket)
+        except MoveError as error:
+            # The invoice is already parked in SAP. A misfiled PDF is a tidiness
+            # problem and must not make a successful posting look broken.
+            log.error("%s %s could not be filed: %s", run.run_id, inv.invoice_id, error)
+            yield ev.Filed(invoiceId=inv.invoice_id, status="error", message=str(error))
+            continue
+
+        if filed is None:  # sample mode, or an invoice that never came from S3
+            continue
+
+        yield ev.Filed(
+            invoiceId=inv.invoice_id,
+            status="moved" if filed.deleted else "kept",
+            bucket=filed.bucket,
+            key=filed.key,
+        )
+        await asyncio.sleep(FLOOR_POSTING)
 
 
 ANSWER_SYSTEM = """You are the accounts payable assistant for a batch of supplier
